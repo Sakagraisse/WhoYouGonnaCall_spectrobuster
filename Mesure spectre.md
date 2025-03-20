@@ -1,6 +1,6 @@
 # Mesure de Lumière avec ArgyllCMS
 
-## Procédure 1 : Mesurer une lumière avec `spotread` (Mode Spot, diffuseur requis)
+## Procédure 1 : Mesurer une lumière avec `illumread` (Mode Spot, diffuseur parfois requis)
 
 ### 1. Préparer l'instrument
 - Fixer le **diffuseur blanc** sur la lentille du i1 Studio.
