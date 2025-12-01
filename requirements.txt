@@ -1,0 +1,4 @@
+PyQt6==6.9.0
+matplotlib==3.10.3
+numpy<2.0.0
+colour-science==0.4.4
