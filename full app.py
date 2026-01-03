@@ -440,15 +440,15 @@ class SpectrumPlotter(QMainWindow):
 
             # Strategy 1: Wide Format (SPEC_xxx or NM_xxx)
             # Check if headers contain spectral bands
+            spec_indices = []
             if not longueur_onde:
-                spec_indices = []
-            for idx, field in enumerate(header_fields):
-                if field.startswith("SPEC_") or field.startswith("NM_"):
-                    try:
-                        wl = float(field.replace("SPEC_", "").replace("NM_", ""))
-                        spec_indices.append((idx, wl))
-                    except ValueError:
-                        pass
+                for idx, field in enumerate(header_fields):
+                    if field.startswith("SPEC_") or field.startswith("NM_"):
+                        try:
+                            wl = float(field.replace("SPEC_", "").replace("NM_", ""))
+                            spec_indices.append((idx, wl))
+                        except ValueError:
+                            pass
             
             if spec_indices:
                 # It is Wide Format
