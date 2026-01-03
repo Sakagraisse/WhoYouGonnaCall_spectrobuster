@@ -372,27 +372,34 @@ class SpectrumPlotter(QMainWindow):
             
             # Check for simple tabular format (Reading X Y Z ... 380.000 ...)
             is_simple_tabular = False
-            if len(lines) >= 2:
-                first_line_parts = lines[0].strip().split()
-                # Check if we have wavelength headers (numbers like 380.000)
-                wavelength_headers = []
-                for part in first_line_parts:
+            header_index = -1
+            
+            # Find the header line (contains many wavelengths)
+            # We look for the LAST header in the file, in case multiple measurements are appended
+            for i, line in enumerate(lines):
+                parts = line.strip().split()
+                wl_count = 0
+                for part in parts:
                     try:
-                        wl = float(part)
-                        if 300 <= wl <= 800: # Reasonable range check
-                            wavelength_headers.append(wl)
+                        val = float(part)
+                        if 300 <= val <= 830:
+                            wl_count += 1
                     except ValueError:
                         pass
                 
-                if len(wavelength_headers) > 10: # If we found many wavelengths in header
+                if wl_count > 10:
                     is_simple_tabular = True
-                    header_fields = first_line_parts
-                    # Data is likely on the second line (or subsequent lines)
-                    # We take the last non-empty line as the reading
-                    for line in reversed(lines[1:]):
-                        if line.strip():
-                            data_values = line.strip().split()
-                            break
+                    header_index = i
+                    header_fields = parts
+            
+            if is_simple_tabular:
+                # Find the last data line after the header
+                # We search backwards from the end of the file
+                # But we must ensure it's after the header_index
+                for line in reversed(lines[header_index+1:]):
+                    if line.strip():
+                        data_values = line.strip().split()
+                        break
 
             if not is_simple_tabular:
                 # Standard CGATS parsing
@@ -429,6 +436,11 @@ class SpectrumPlotter(QMainWindow):
             # Strategy 0: Simple Tabular (Header has wavelengths)
             if is_simple_tabular:
                 self.console_output.append(f"Debug: Detected Simple Tabular format. Header cols: {len(header_fields)}, Data cols: {len(data_values)}")
+                
+                if not data_values:
+                    self.console_output.append("Error: Header found but no data line found.")
+                    return
+
                 for idx, field in enumerate(header_fields):
                     try:
                         wl = float(field)
@@ -441,11 +453,16 @@ class SpectrumPlotter(QMainWindow):
                     except ValueError:
                         pass
                 self.console_output.append(f"Debug: Extracted {len(longueur_onde)} spectral points.")
+                
+                # If we found a tabular format, we trust it. If extraction failed, don't try other strategies.
+                if not longueur_onde:
+                     self.console_output.append("Error: Could not extract spectral data from tabular format.")
+                     return
 
             # Strategy 1: Wide Format (SPEC_xxx or NM_xxx)
             # Check if headers contain spectral bands
             spec_indices = []
-            if not longueur_onde:
+            if not longueur_onde and not is_simple_tabular:
                 for idx, field in enumerate(header_fields):
                     if field.startswith("SPEC_") or field.startswith("NM_"):
                         try:
@@ -471,7 +488,7 @@ class SpectrumPlotter(QMainWindow):
                                 intensité.append(val)
                             except ValueError:
                                 pass
-            else:
+            elif not longueur_onde and not is_simple_tabular:
                 # Strategy 2: Tall Format (Columns)
                 # Look for 'Wavelength' and 'Spectral'/'Value' columns
                 # Or just assume 2 columns if not specified
