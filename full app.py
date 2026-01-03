@@ -223,14 +223,17 @@ class SpectrumPlotter(QMainWindow):
             return
 
         # Build command
-        # spotread -v -S temp_measure.sp -x [mode] [instrument]
-        # -x for Yxy output
-        args = ["spotread", "-v", "-S", self.temp_file, "-x"]
+        # spotread -v [mode] -x -S temp_measure.sp
+        args = ["spotread", "-v"]
         
         # Mode
         mode_arg = self.mode_combo.currentData()
         if mode_arg:
             args.append(mode_arg)
+
+        # Output format and file
+        args.append("-x")
+        args.extend(["-S", self.temp_file])
             
         self.console_output.append(f"Starting: {' '.join(args)}")
         
