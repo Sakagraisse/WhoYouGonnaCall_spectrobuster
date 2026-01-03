@@ -370,39 +370,78 @@ class SpectrumPlotter(QMainWindow):
             in_format = False
             in_data = False
             
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                if line == "BEGIN_DATA_FORMAT":
-                    in_format = True
-                    continue
-                if line == "END_DATA_FORMAT":
-                    in_format = False
-                    continue
-                    
-                if line == "BEGIN_DATA":
-                    in_data = True
-                    continue
-                if line == "END_DATA":
-                    in_data = False
-                    continue
-                    
-                if in_format:
-                    header_fields.extend(line.split())
+            # Check for simple tabular format (Reading X Y Z ... 380.000 ...)
+            is_simple_tabular = False
+            if len(lines) >= 2:
+                first_line_parts = lines[0].strip().split()
+                # Check if we have wavelength headers (numbers like 380.000)
+                wavelength_headers = []
+                for part in first_line_parts:
+                    try:
+                        wl = float(part)
+                        if 300 <= wl <= 800: # Reasonable range check
+                            wavelength_headers.append(wl)
+                    except ValueError:
+                        pass
                 
-                if in_data:
-                    # Handle comments or empty lines if any
-                    if line.startswith('#'): continue
-                    data_values.extend(line.split())
+                if len(wavelength_headers) > 10: # If we found many wavelengths in header
+                    is_simple_tabular = True
+                    header_fields = first_line_parts
+                    # Data is likely on the second line (or subsequent lines)
+                    # We take the last non-empty line as the reading
+                    for line in reversed(lines[1:]):
+                        if line.strip():
+                            data_values = line.strip().split()
+                            break
+
+            if not is_simple_tabular:
+                # Standard CGATS parsing
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    if line == "BEGIN_DATA_FORMAT":
+                        in_format = True
+                        continue
+                    if line == "END_DATA_FORMAT":
+                        in_format = False
+                        continue
+                        
+                    if line == "BEGIN_DATA":
+                        in_data = True
+                        continue
+                    if line == "END_DATA":
+                        in_data = False
+                        continue
+                        
+                    if in_format:
+                        header_fields.extend(line.split())
+                    
+                    if in_data:
+                        # Handle comments or empty lines if any
+                        if line.startswith('#'): continue
+                        data_values.extend(line.split())
 
             longueur_onde = []
             intensité = []
 
+            # Strategy 0: Simple Tabular (Header has wavelengths)
+            if is_simple_tabular:
+                for idx, field in enumerate(header_fields):
+                    try:
+                        wl = float(field)
+                        if 300 <= wl <= 830 and idx < len(data_values):
+                            val = float(data_values[idx])
+                            longueur_onde.append(wl)
+                            intensité.append(val)
+                    except ValueError:
+                        pass
+
             # Strategy 1: Wide Format (SPEC_xxx or NM_xxx)
             # Check if headers contain spectral bands
-            spec_indices = []
+            if not longueur_onde:
+                spec_indices = []
             for idx, field in enumerate(header_fields):
                 if field.startswith("SPEC_") or field.startswith("NM_"):
                     try:
