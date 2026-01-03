@@ -1,10 +1,12 @@
 import sys
 import os
 import copy
+import subprocess
+import pty
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox)
-from PyQt6.QtCore import Qt, QProcess, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSocketNotifier
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -137,6 +139,11 @@ class SpectrumPlotter(QMainWindow):
         self.start_btn.clicked.connect(self.start_session)
         self.controls_layout.addWidget(self.start_btn)
 
+        self.calibrate_btn = QPushButton("Calibrer (Touche)")
+        self.calibrate_btn.clicked.connect(self.trigger_calibration)
+        self.calibrate_btn.setEnabled(False)
+        self.controls_layout.addWidget(self.calibrate_btn)
+
         self.measure_btn = QPushButton("Mesurer (Espace)")
         self.measure_btn.clicked.connect(self.trigger_measurement)
         self.measure_btn.setEnabled(False)
@@ -205,89 +212,133 @@ class SpectrumPlotter(QMainWindow):
         self.ax = self.canvas.figure.subplots()
 
         # Process Handling
-        self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self.handle_stdout)
-        self.process.readyReadStandardError.connect(self.handle_stderr)
-        self.process.finished.connect(self.process_finished)
+        self.subprocess = None
+        self.master_fd = None
+        self.notifier = None
         
         self.temp_file = "temp_measure.sp"
 
     def start_session(self):
-        if self.process.state() == QProcess.ProcessState.Running:
+        if self.subprocess and self.subprocess.poll() is None:
             return
 
         # Build command
         # spotread -v -S temp_measure.sp -x [mode] [instrument]
         # -x for Yxy output
-        args = ["-v", "-S", self.temp_file, "-x"]
+        args = ["spotread", "-v", "-S", self.temp_file, "-x"]
         
         # Mode
         mode_arg = self.mode_combo.currentData()
         if mode_arg:
             args.append(mode_arg)
             
-        # Instrument (optional, usually -c port or -N)
-        # If user entered a number, we might need to handle it. 
-        # spotread usually auto-detects. If we want to select, it's tricky without listing.
-        # We'll assume default behavior or let user add flags if they edit the combo.
-        # For now, let's just run spotread.
+        self.console_output.append(f"Starting: {' '.join(args)}")
         
-        # Note: -H for High Res if available?
-        # args.append("-H") 
+        # Use PTY to simulate a terminal
+        self.master_fd, slave_fd = pty.openpty()
+        
+        try:
+            self.subprocess = subprocess.Popen(
+                args,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                preexec_fn=os.setsid,
+                close_fds=True
+            )
+        except Exception as e:
+            self.console_output.append(f"Failed to start: {e}")
+            os.close(self.master_fd)
+            os.close(slave_fd)
+            return
 
-        self.console_output.append(f"Starting: spotread {' '.join(args)}")
-        self.process.start("spotread", args)
+        os.close(slave_fd) # Close slave in parent
+
+        # Setup QSocketNotifier to read output asynchronously
+        self.notifier = QSocketNotifier(self.master_fd, QSocketNotifier.Type.Read, self)
+        self.notifier.activated.connect(self.handle_output)
         
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.measure_btn.setEnabled(True)
+        self.calibrate_btn.setEnabled(True)
         self.instrument_combo.setEnabled(False)
         self.mode_combo.setEnabled(False)
 
     def stop_session(self):
-        if self.process.state() == QProcess.ProcessState.Running:
-            self.process.write(b'q') # Send quit command
-            self.process.closeWriteChannel()
-            # If it doesn't quit, kill it after a delay?
-            QTimer.singleShot(1000, self.process.kill)
+        if self.subprocess and self.subprocess.poll() is None:
+            self.subprocess.terminate()
+            QTimer.singleShot(1000, self.force_kill)
+        else:
+            self.process_finished()
+
+    def force_kill(self):
+        if self.subprocess and self.subprocess.poll() is None:
+            self.subprocess.kill()
+        self.process_finished()
         
+    def trigger_calibration(self):
+        if self.master_fd is not None:
+            os.write(self.master_fd, b' ') # Send Space
+            self.console_output.append(">> Sent SPACE (Calibrate)")
+
     def trigger_measurement(self):
-        if self.process.state() == QProcess.ProcessState.Running:
-            self.process.write(b' ') # Send Space to trigger measure
+        if self.master_fd is not None:
+            os.write(self.master_fd, b' ') # Send Space
             self.console_output.append(">> Sent SPACE (Measure)")
 
-    def handle_stdout(self):
-        data = self.process.readAllStandardOutput().data().decode()
-        self.console_output.insertPlainText(data)
-        self.console_output.ensureCursorVisible()
-        
-        # Parse for XYZ
-        match_xyz = re.search(r"Result is XYZ:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
-        if match_xyz:
-            X, Y, Z = map(float, match_xyz.groups())
-            self.update_color_display(X, Y, Z)
-            self.plot_spectrum(self.temp_file)
-            return
+    def handle_output(self):
+        if self.master_fd is None: return
+        try:
+            # Read from PTY
+            data_bytes = os.read(self.master_fd, 4096)
+            if not data_bytes:
+                self.process_finished()
+                return
+            
+            data = data_bytes.decode('utf-8', errors='replace')
+            self.console_output.insertPlainText(data)
+            self.console_output.ensureCursorVisible()
+            
+            # Parse for XYZ
+            match_xyz = re.search(r"Result is XYZ:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
+            if match_xyz:
+                X, Y, Z = map(float, match_xyz.groups())
+                self.update_color_display(X, Y, Z)
+                self.plot_spectrum(self.temp_file)
+                return
 
-        # Parse for Yxy (if -x is used)
-        match_yxy = re.search(r"Result is Yxy:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
-        if match_yxy:
-            Y, x, y = map(float, match_yxy.groups())
-            X, Y_val, Z = yxy_to_xyz(Y, x, y)
-            self.update_color_display(X, Y_val, Z)
-            self.plot_spectrum(self.temp_file)
-            return
-
-    def handle_stderr(self):
-        data = self.process.readAllStandardError().data().decode()
-        self.console_output.insertPlainText(data)
-        self.console_output.ensureCursorVisible()
+            # Parse for Yxy (if -x is used)
+            match_yxy = re.search(r"Result is Yxy:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
+            if match_yxy:
+                Y, x, y = map(float, match_yxy.groups())
+                X, Y_val, Z = yxy_to_xyz(Y, x, y)
+                self.update_color_display(X, Y_val, Z)
+                self.plot_spectrum(self.temp_file)
+                return
+            
+        except OSError:
+            self.process_finished()
 
     def process_finished(self):
+        if self.notifier:
+            self.notifier.setEnabled(False)
+            self.notifier = None
+        
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+            
+        self.subprocess = None
+        
         self.console_output.append("Process Finished.")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.measure_btn.setEnabled(False)
+        self.calibrate_btn.setEnabled(False)
         self.instrument_combo.setEnabled(True)
         self.mode_combo.setEnabled(True)
 
