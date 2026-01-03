@@ -428,15 +428,19 @@ class SpectrumPlotter(QMainWindow):
 
             # Strategy 0: Simple Tabular (Header has wavelengths)
             if is_simple_tabular:
+                self.console_output.append(f"Debug: Detected Simple Tabular format. Header cols: {len(header_fields)}, Data cols: {len(data_values)}")
                 for idx, field in enumerate(header_fields):
                     try:
                         wl = float(field)
+                        # Filter out non-wavelength numbers (like '1' if it was in header, though unlikely for 'Reading')
+                        # And ensure we have corresponding data
                         if 300 <= wl <= 830 and idx < len(data_values):
                             val = float(data_values[idx])
                             longueur_onde.append(wl)
                             intensité.append(val)
                     except ValueError:
                         pass
+                self.console_output.append(f"Debug: Extracted {len(longueur_onde)} spectral points.")
 
             # Strategy 1: Wide Format (SPEC_xxx or NM_xxx)
             # Check if headers contain spectral bands
