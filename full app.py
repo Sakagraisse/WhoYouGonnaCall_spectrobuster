@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox,
-                             QLineEdit, QSizePolicy)
+                             QLineEdit)
 from PyQt6.QtCore import Qt, QTimer, QSocketNotifier
 
 try:
