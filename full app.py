@@ -160,6 +160,8 @@ class SpectrumPlotter(QMainWindow):
         # ArgyllCMS Controls Group
         self.controls_group = QGroupBox("ArgyllCMS Controls")
         self.controls_layout = QVBoxLayout()
+        self.controls_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.controls_group.setMinimumHeight(260)
         self.controls_group.setLayout(self.controls_layout)
 
         # Instrument Selection
@@ -227,6 +229,7 @@ class SpectrumPlotter(QMainWindow):
         self.color_group = QGroupBox("Colorimétrie & CRI")
         self.color_layout = QVBoxLayout()
         self.color_group.setLayout(self.color_layout)
+        self.color_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.color_patch = QLabel()
         self.color_patch.setFixedSize(100, 100)
@@ -252,6 +255,7 @@ class SpectrumPlotter(QMainWindow):
         self.color_layout.addWidget(self.cri_details)
 
         self.left_layout.addWidget(self.color_group)
+        self.left_layout.addStretch(1)
 
         # --- Right Panel: Plot ---
         self.right_panel = QWidget()
@@ -263,7 +267,9 @@ class SpectrumPlotter(QMainWindow):
         self.open_button.clicked.connect(self.open_file)
         self.right_layout.addWidget(self.open_button)
 
-        self.canvas = FigureCanvas(plt.Figure(figsize=(15, 10), dpi=100))
+        self.canvas = FigureCanvas(plt.Figure(figsize=(12, 9), dpi=100))
+        self.canvas.setMinimumSize(800, 600)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.right_layout.addWidget(self.canvas)
 
         self.save_button = QPushButton('Sauvegarder le graphique')
@@ -753,7 +759,7 @@ class SpectrumPlotter(QMainWindow):
         if file_path:
             original_size = self.canvas.figure.get_size_inches()
             original_dpi = self.canvas.figure.get_dpi()
-            self.canvas.figure.set_size_inches(15, 10)
+            self.canvas.figure.set_size_inches(12, 9)
             self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=20)
             self.ax.set_ylabel('Intensité', fontsize=20)
             self.ax.title.set_fontsize(24)
