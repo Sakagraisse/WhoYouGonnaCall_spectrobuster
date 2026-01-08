@@ -3,9 +3,13 @@ import os
 import copy
 import subprocess
 import pty
+import shutil
+from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox)
+                             QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox,
+                             QLineEdit)
 from PyQt6.QtCore import Qt, QTimer, QSocketNotifier
 
 try:
@@ -101,16 +105,56 @@ class SpectrumPlotter(QMainWindow):
         super().__init__()
         self.setWindowTitle('Spectre Plotter & ArgyllCMS Interface')
         self.setGeometry(100, 100, 1200, 800)
+        self.setStyleSheet("""
+            QWidget {
+                font-size: 12px;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #c7c7c7;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding: 6px;
+                background-color: #f7f7f7;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+            }
+            QPushButton {
+                background-color: #2d6cdf;
+                color: white;
+                border: none;
+                padding: 6px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:disabled {
+                background-color: #9ab3e5;
+            }
+            QPushButton:hover:!disabled {
+                background-color: #1f5bc7;
+            }
+            QLineEdit, QTextEdit, QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #c7c7c7;
+                border-radius: 4px;
+                padding: 4px;
+            }
+        """)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
         # Main Layout
         self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(12, 12, 12, 12)
+        self.main_layout.setSpacing(12)
 
         # --- Left Panel: Controls & Console ---
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
+        self.left_layout.setSpacing(10)
         self.main_layout.addWidget(self.left_panel, 1)
 
         # ArgyllCMS Controls Group
@@ -133,6 +177,22 @@ class SpectrumPlotter(QMainWindow):
         self.mode_combo.addItem("Projector [-p]", "-p")
         self.mode_combo.addItem("Spot (Reflectance) [Default]", "")
         self.controls_layout.addWidget(self.mode_combo)
+
+        # Measurement Naming
+        self.controls_layout.addWidget(QLabel("Nom de la mesure:"))
+        self.measurement_name_input = QLineEdit()
+        self.measurement_name_input.setPlaceholderText("ex: Lampe-01")
+        self.controls_layout.addWidget(self.measurement_name_input)
+
+        # Save Folder
+        self.controls_layout.addWidget(QLabel("Dossier de sauvegarde:"))
+        self.save_folder_input = QLineEdit()
+        self.save_folder_input.setReadOnly(True)
+        self.controls_layout.addWidget(self.save_folder_input)
+
+        self.change_folder_btn = QPushButton("Choisir le dossier")
+        self.change_folder_btn.clicked.connect(self.select_save_folder)
+        self.controls_layout.addWidget(self.change_folder_btn)
 
         # Buttons
         self.start_btn = QPushButton("Démarrer Session (spotread)")
@@ -196,6 +256,7 @@ class SpectrumPlotter(QMainWindow):
         # --- Right Panel: Plot ---
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout(self.right_panel)
+        self.right_layout.setSpacing(8)
         self.main_layout.addWidget(self.right_panel, 2)
 
         self.open_button = QPushButton('Choisir le fichier (Manuel)')
@@ -217,6 +278,10 @@ class SpectrumPlotter(QMainWindow):
         self.notifier = None
         
         self.temp_file = "temp_measure.sp"
+        self.base_save_dir = Path.cwd() / "mesures"
+        self.base_save_dir.mkdir(parents=True, exist_ok=True)
+        self.save_folder_input.setText(str(self.base_save_dir))
+        self.last_saved_mtime = None
 
     def start_session(self):
         if self.subprocess and self.subprocess.poll() is None:
@@ -309,6 +374,7 @@ class SpectrumPlotter(QMainWindow):
                 X, Y, Z = map(float, match_xyz.groups())
                 self.update_color_display(X, Y, Z)
                 self.plot_spectrum(self.temp_file)
+                self.save_measurement_file()
                 return
 
             # Parse for Yxy (if -x is used)
@@ -318,6 +384,7 @@ class SpectrumPlotter(QMainWindow):
                 X, Y_val, Z = yxy_to_xyz(Y, x, y)
                 self.update_color_display(X, Y_val, Z)
                 self.plot_spectrum(self.temp_file)
+                self.save_measurement_file()
                 return
             
         except OSError:
@@ -344,6 +411,53 @@ class SpectrumPlotter(QMainWindow):
         self.calibrate_btn.setEnabled(False)
         self.instrument_combo.setEnabled(True)
         self.mode_combo.setEnabled(True)
+
+    def select_save_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Choisir le dossier de sauvegarde")
+        if folder:
+            self.base_save_dir = Path(folder)
+            self.base_save_dir.mkdir(parents=True, exist_ok=True)
+            self.save_folder_input.setText(str(self.base_save_dir))
+            self.console_output.append(f"Dossier de sauvegarde: {self.base_save_dir}")
+
+    def sanitize_measurement_name(self, name):
+        cleaned = re.sub(r"[^\w\-]+", "_", name.strip())
+        return cleaned.strip("_") or "mesure"
+
+    def resolve_unique_path(self, folder, base_name, suffix):
+        candidate = folder / f"{base_name}{suffix}"
+        if not candidate.exists():
+            return candidate
+        index = 1
+        while True:
+            candidate = folder / f"{base_name}_{index}{suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def save_measurement_file(self):
+        if not os.path.exists(self.temp_file):
+            return
+
+        try:
+            mtime = os.path.getmtime(self.temp_file)
+        except OSError:
+            return
+
+        if self.last_saved_mtime is not None and mtime <= self.last_saved_mtime:
+            return
+
+        date_folder = self.base_save_dir / datetime.now().strftime("%Y-%m-%d")
+        date_folder.mkdir(parents=True, exist_ok=True)
+        base_name = self.sanitize_measurement_name(self.measurement_name_input.text())
+        destination = self.resolve_unique_path(date_folder, base_name, ".sp")
+
+        try:
+            shutil.move(self.temp_file, destination)
+            self.last_saved_mtime = mtime
+            self.console_output.append(f"Mesure sauvegardée: {destination}")
+        except Exception as exc:
+            self.console_output.append(f"Erreur sauvegarde mesure: {exc}")
 
     def update_color_display(self, X, Y, Z):
         r, g, b = xyz_to_rgb(X, Y, Z)
