@@ -2,8 +2,9 @@ import sys
 import os
 import copy
 import subprocess
-import select
 import time
+import queue
+import threading
 import pty
 import shutil
 from datetime import datetime
@@ -137,23 +138,38 @@ class InstrumentEnumeratorThread(QThread):
                 env=env,
             )
 
-            # Read line-by-line; kill as soon as we've parsed the -c section,
-            # BEFORE spotread reaches "Connecting to the instrument.." and locks USB.
+            # Use a reader thread + queue to avoid BufferedReader/select() mismatch:
+            # select() checks the OS fd, but Python's BufferedReader may have already
+            # drained the pipe into its internal buffer — so select() reports "no data"
+            # even when lines are ready.  Blocking readline() in a daemon thread + Queue
+            # avoids this entirely.
+            line_q = queue.Queue()
+
+            def _reader():
+                try:
+                    for raw_line in proc.stdout:
+                        line_q.put(raw_line)
+                finally:
+                    line_q.put(None)  # sentinel: EOF
+
+            reader_thread = threading.Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
             in_c_section = False
             deadline = time.monotonic() + 10.0  # hard safety limit
 
             while time.monotonic() < deadline:
-                ready, _, _ = select.select([proc.stdout], [], [], 0.2)
-                if not ready:
-                    # No data yet — check if process already exited
+                try:
+                    item = line_q.get(timeout=0.3)
+                except queue.Empty:
                     if proc.poll() is not None:
                         break
                     continue
 
-                line_bytes = proc.stdout.readline()
-                if not line_bytes:
+                if item is None:  # EOF sentinel
                     break
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+
+                line = item.decode("utf-8", errors="replace").rstrip("\n")
                 raw_lines.append(line)
 
                 if re.search(r"\s-c\s", line):
@@ -165,18 +181,13 @@ class InstrumentEnumeratorThread(QThread):
                     if m:
                         instruments[int(m.group(1))] = m.group(2)
                         continue
-                    # End of -c section: next option flag detected — kill now
+                    # End of -c section: next option flag — kill before USB connect
                     if re.match(r"\s+-[a-zA-Z]", line):
                         proc.kill()
                         proc.wait()
                         break
 
-            else:
-                # Deadline reached — kill to avoid USB lock
-                proc.kill()
-                proc.wait()
-
-            # Ensure process is gone in all cases
+            # Ensure process is gone in all cases (deadline or early exit)
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
