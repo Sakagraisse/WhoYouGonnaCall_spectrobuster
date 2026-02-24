@@ -9,8 +9,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox,
-                             QLineEdit, QSizePolicy)
-from PyQt6.QtCore import Qt, QTimer, QSocketNotifier
+                             QLineEdit, QSizePolicy, QScrollArea, QFormLayout, QGridLayout)
+from PyQt6.QtCore import Qt, QTimer, QSocketNotifier, QThread, pyqtSignal
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -19,6 +19,16 @@ except ImportError:
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.path as _mpath
+
+# Workaround: matplotlib.path.Path.__deepcopy__ is broken on Python 3.14+
+# (infinite recursion via copy.deepcopy(super(), memo)).
+# Path is immutable — returning self is safe and breaks the recursion.
+def _path_deepcopy_fix(self, memo):
+    memo[id(self)] = self
+    return self
+_mpath.Path.__deepcopy__ = _path_deepcopy_fix
+
 import re
 import numpy as np
 import colour
@@ -100,6 +110,64 @@ def yxy_to_xyz(Y, x, y):
     Z = (1 - x - y) * (Y / y)
     return X, Y, Z
 
+
+class InstrumentEnumeratorThread(QThread):
+    """Runs `spotread -?` and parses the instrument list."""
+    instruments_found = pyqtSignal(dict)  # {index(int): name(str)}
+    debug_output      = pyqtSignal(str)   # raw spotread output for debugging
+
+    def run(self):
+        instruments = {}
+        raw = ""
+        try:
+            # Add common ArgyllCMS paths on macOS (Homebrew, manual installs, etc.)
+            env = os.environ.copy()
+            extra = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin",
+                     os.path.expanduser("~/bin")]
+            env["PATH"] = ":".join(extra) + ":" + env.get("PATH", "")
+
+            proc = subprocess.run(
+                ["spotread", "-?"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # merge stderr so we catch either stream
+                stdin=subprocess.DEVNULL,  # prevent blocking wait for keyboard input
+                env=env,
+                timeout=15,
+            )
+            raw = proc.stdout.decode("utf-8", errors="replace")
+        except subprocess.TimeoutExpired as e:
+            # spotread can hang on USB enumeration even for -?
+            # Python keeps whatever was already printed in e.stdout — often enough to
+            # find the instrument list before the USB scan blocked.
+            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
+            if not raw:
+                raw = "[spotread -? a expiré sans produire de sortie — vérifiez ArgyllCMS]"
+        except FileNotFoundError:
+            raw = "[spotread non trouvé — ArgyllCMS installé et dans le PATH ?]"
+        except Exception as e:
+            raw = f"[Erreur énumération: {e}]"
+
+        self.debug_output.emit(raw)
+
+        # Parse lines matching:   N = 'Instrument name'
+        # which appear in the block after a line that contains " -c "
+        in_c_section = False
+        for line in raw.splitlines():
+            if re.search(r"\s-c\s", line):
+                in_c_section = True
+                continue
+            if in_c_section:
+                m = re.match(r"\s+(\d+)\s+=\s+'(.+)'", line)
+                if m:
+                    instruments[int(m.group(1))] = m.group(2)
+                    continue
+                # Stop when we hit the next option flag
+                if re.match(r"\s+-[a-zA-Z]", line):
+                    break
+
+        self.instruments_found.emit(instruments)
+
+
 class SpectrumPlotter(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -128,6 +196,8 @@ class SpectrumPlotter(QMainWindow):
                 border: none;
                 padding: 6px 10px;
                 border-radius: 4px;
+                min-height: 30px;
+                min-width: 80px;
             }
             QPushButton:disabled {
                 background-color: #9ab3e5;
@@ -135,7 +205,14 @@ class SpectrumPlotter(QMainWindow):
             QPushButton:hover:!disabled {
                 background-color: #1f5bc7;
             }
-            QLineEdit, QTextEdit, QComboBox {
+            QLineEdit, QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #c7c7c7;
+                border-radius: 4px;
+                padding: 4px;
+                min-height: 28px;
+            }
+            QTextEdit {
                 background-color: #ffffff;
                 border: 1px solid #c7c7c7;
                 border-radius: 4px;
@@ -153,68 +230,110 @@ class SpectrumPlotter(QMainWindow):
 
         # --- Left Panel: Controls & Console ---
         self.left_panel = QWidget()
+        self.left_panel.setMinimumWidth(260)
         self.left_layout = QVBoxLayout(self.left_panel)
         self.left_layout.setSpacing(10)
-        self.main_layout.addWidget(self.left_panel, 1)
+
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidget(self.left_panel)
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.left_scroll.setMinimumWidth(280)
+        self.main_layout.addWidget(self.left_scroll, 1)
 
         # ArgyllCMS Controls Group
         self.controls_group = QGroupBox("ArgyllCMS Controls")
-        self.controls_layout = QVBoxLayout()
         self.controls_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.controls_group.setMinimumHeight(260)
-        self.controls_group.setLayout(self.controls_layout)
+        controls_outer = QVBoxLayout()
+        controls_outer.setSpacing(8)
+        self.controls_group.setLayout(controls_outer)
 
-        # Instrument Selection
-        self.controls_layout.addWidget(QLabel("Instrument:"))
+        # --- Form: Instrument / Mode / Nom ---
+        form = QFormLayout()
+        form.setSpacing(6)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        instr_row_widget = QWidget()
+        instr_row_layout = QHBoxLayout(instr_row_widget)
+        instr_row_layout.setContentsMargins(0, 0, 0, 0)
+        instr_row_layout.setSpacing(4)
         self.instrument_combo = QComboBox()
-        self.instrument_combo.addItems(["1", "2", "3", "4", "5"]) # Simple selection
-        self.instrument_combo.setEditable(True)
-        self.controls_layout.addWidget(self.instrument_combo)
+        self.instrument_combo.setMinimumWidth(140)
+        self.instrument_combo.addItem("-- Recherche... --", None)
+        instr_row_layout.addWidget(self.instrument_combo, 1)
+        self.refresh_instr_btn = QPushButton("\U0001f504")
+        self.refresh_instr_btn.setFixedSize(34, 34)
+        self.refresh_instr_btn.setToolTip("Actualiser la liste des instruments")
+        self.refresh_instr_btn.clicked.connect(self.enumerate_instruments)
+        instr_row_layout.addWidget(self.refresh_instr_btn)
+        form.addRow("Instrument :", instr_row_widget)
 
-        # Mode Selection
-        self.controls_layout.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Emission (Screen) [-e]", "-e")
         self.mode_combo.addItem("Ambient (Spot) [-a]", "-a")
         self.mode_combo.addItem("Projector [-p]", "-p")
         self.mode_combo.addItem("Spot (Reflectance) [Default]", "")
-        self.controls_layout.addWidget(self.mode_combo)
+        form.addRow("Mode :", self.mode_combo)
 
-        # Measurement Naming
-        self.controls_layout.addWidget(QLabel("Nom de la mesure:"))
         self.measurement_name_input = QLineEdit()
         self.measurement_name_input.setPlaceholderText("ex: Lampe-01")
-        self.controls_layout.addWidget(self.measurement_name_input)
+        form.addRow("Nom mesure :", self.measurement_name_input)
 
-        # Save Folder
-        self.controls_layout.addWidget(QLabel("Dossier de sauvegarde:"))
+        controls_outer.addLayout(form)
+
+        # --- Dossier de sauvegarde (inline) ---
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(6)
         self.save_folder_input = QLineEdit()
         self.save_folder_input.setReadOnly(True)
-        self.controls_layout.addWidget(self.save_folder_input)
-
-        self.change_folder_btn = QPushButton("Choisir le dossier")
+        self.save_folder_input.setPlaceholderText("Dossier de sauvegarde...")
+        folder_row.addWidget(self.save_folder_input, 1)
+        self.change_folder_btn = QPushButton("Parcourir")
+        self.change_folder_btn.setFixedWidth(80)
         self.change_folder_btn.clicked.connect(self.select_save_folder)
-        self.controls_layout.addWidget(self.change_folder_btn)
+        folder_row.addWidget(self.change_folder_btn)
+        controls_outer.addLayout(folder_row)
 
-        # Buttons
-        self.start_btn = QPushButton("Démarrer Session (spotread)")
+        # --- Action Buttons (grid) ---
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(6)
+
+        self.start_btn = QPushButton("▶  Démarrer Session")
         self.start_btn.clicked.connect(self.start_session)
-        self.controls_layout.addWidget(self.start_btn)
+        self.start_btn.setStyleSheet(
+            "QPushButton { background-color: #27ae60; min-height: 34px; font-weight: bold; }"
+            "QPushButton:hover:!disabled { background-color: #1e8449; }"
+            "QPushButton:disabled { background-color: #a9dfbf; }"
+        )
+        btn_grid.addWidget(self.start_btn, 0, 0, 1, 2)
 
-        self.calibrate_btn = QPushButton("Calibrer (Touche)")
+        self.calibrate_btn = QPushButton("⚙  Calibrer")
         self.calibrate_btn.clicked.connect(self.trigger_calibration)
         self.calibrate_btn.setEnabled(False)
-        self.controls_layout.addWidget(self.calibrate_btn)
+        btn_grid.addWidget(self.calibrate_btn, 1, 0)
 
-        self.measure_btn = QPushButton("Mesurer (Espace)")
+        self.measure_btn = QPushButton("◉  Mesurer")
         self.measure_btn.clicked.connect(self.trigger_measurement)
         self.measure_btn.setEnabled(False)
-        self.controls_layout.addWidget(self.measure_btn)
+        btn_grid.addWidget(self.measure_btn, 1, 1)
 
-        self.stop_btn = QPushButton("Arrêter Session")
+        self.stop_btn = QPushButton("■  Arrêter Session")
         self.stop_btn.clicked.connect(self.stop_session)
         self.stop_btn.setEnabled(False)
-        self.controls_layout.addWidget(self.stop_btn)
+        self.stop_btn.setStyleSheet(
+            "QPushButton { background-color: #c0392b; min-height: 34px; font-weight: bold; }"
+            "QPushButton:hover:!disabled { background-color: #a93226; }"
+            "QPushButton:disabled { background-color: #f1948a; }"
+        )
+        btn_grid.addWidget(self.stop_btn, 2, 0, 1, 2)
+
+        controls_outer.addLayout(btn_grid)
+
+        # Calibration status indicator
+        self.calib_status_label = QLabel("🔴  Non calibré")
+        self.calib_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.calib_status_label.setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;")
+        controls_outer.addWidget(self.calib_status_label)
 
         self.left_layout.addWidget(self.controls_group)
 
@@ -222,7 +341,9 @@ class SpectrumPlotter(QMainWindow):
         self.left_layout.addWidget(QLabel("Sortie Console:"))
         self.console_output = QTextEdit()
         self.console_output.setReadOnly(True)
-        self.console_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: Monospace;")
+        self.console_output.setMinimumHeight(120)
+        self.console_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        self.console_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: 'Menlo', 'Courier New', monospace;")
         self.left_layout.addWidget(self.console_output)
 
         # Color Equivalence Group
@@ -251,7 +372,7 @@ class SpectrumPlotter(QMainWindow):
         self.cri_details = QTextEdit()
         self.cri_details.setReadOnly(True)
         self.cri_details.setMaximumHeight(150)
-        self.cri_details.setStyleSheet("font-family: Monospace; font-size: 10px;")
+        self.cri_details.setStyleSheet("font-family: 'Menlo', 'Courier New', monospace; font-size: 10px;")
         self.color_layout.addWidget(self.cri_details)
 
         self.left_layout.addWidget(self.color_group)
@@ -289,28 +410,46 @@ class SpectrumPlotter(QMainWindow):
         self.save_folder_input.setText(str(self.base_save_dir))
         self.last_saved_mtime = None
 
+        # --- Session state ---
+        self._calibrated = False
+        self._stdout_buf = ""
+        self._pending_result = False
+        self._last_xyz = (0.0, 0.0, 0.0)
+        self._instr_thread = None
+
+        # Enumerate instruments at startup
+        self.enumerate_instruments()
+
     def start_session(self):
         if self.subprocess and self.subprocess.poll() is None:
             return
 
-        # Build command
-        # spotread -v [mode] -x -S temp_measure.sp
-        args = ["spotread", "-v"]
-        
-        # Mode
+        # Build command: spotread -v -s <temp_file> [-c N] [mode]
+        args = ["spotread", "-v", "-s", self.temp_file]
+
+        # Instrument selection (-c index)
+        instr_idx = self.instrument_combo.currentIndex()
+        instr_data = self.instrument_combo.itemData(instr_idx)
+        if instr_data is not None:
+            args.extend(["-c", str(instr_data)])
+
+        # Mode flag
         mode_arg = self.mode_combo.currentData()
         if mode_arg:
             args.append(mode_arg)
 
-        # Output format and file
-        args.append("-x")
-        args.extend(["-S", self.temp_file])
-            
         self.console_output.append(f"Starting: {' '.join(args)}")
-        
+
+        # Reset session state
+        self._stdout_buf = ""
+        self._pending_result = False
+        self._calibrated = False
+        self.calib_status_label.setText("\U0001f534  Non calibr\u00e9")
+        self.calib_status_label.setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;")
+
         # Use PTY to simulate a terminal
         self.master_fd, slave_fd = pty.openpty()
-        
+
         try:
             self.subprocess = subprocess.Popen(
                 args,
@@ -326,16 +465,17 @@ class SpectrumPlotter(QMainWindow):
             os.close(slave_fd)
             return
 
-        os.close(slave_fd) # Close slave in parent
+        os.close(slave_fd)  # Close slave in parent
 
         # Setup QSocketNotifier to read output asynchronously
         self.notifier = QSocketNotifier(self.master_fd, QSocketNotifier.Type.Read, self)
         self.notifier.activated.connect(self.handle_output)
-        
+
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.measure_btn.setEnabled(True)
         self.calibrate_btn.setEnabled(True)
+        self.refresh_instr_btn.setEnabled(False)
         self.instrument_combo.setEnabled(False)
         self.mode_combo.setEnabled(False)
 
@@ -350,73 +490,206 @@ class SpectrumPlotter(QMainWindow):
         if self.subprocess and self.subprocess.poll() is None:
             self.subprocess.kill()
         self.process_finished()
-        
+
     def trigger_calibration(self):
+        """Send space to spotread to trigger calibration."""
         if self.master_fd is not None:
-            os.write(self.master_fd, b' ') # Send Space
-            self.console_output.append(">> Sent SPACE (Calibrate)")
+            os.write(self.master_fd, b' ')
+            self.console_output.append(">> Calibration envoy\u00e9e (SPACE)")
 
     def trigger_measurement(self):
+        """Send space to spotread to take a measurement."""
         if self.master_fd is not None:
-            os.write(self.master_fd, b' ') # Send Space
-            self.console_output.append(">> Sent SPACE (Measure)")
+            os.write(self.master_fd, b' ')
+            self.console_output.append(">> Mesure envoy\u00e9e (SPACE)")
 
+    # ------------------------------------------------------------------
+    # PTY output handler
+    # ------------------------------------------------------------------
     def handle_output(self):
-        if self.master_fd is None: return
+        if self.master_fd is None:
+            return
         try:
-            # Read from PTY
             data_bytes = os.read(self.master_fd, 4096)
             if not data_bytes:
                 self.process_finished()
                 return
-            
+
             data = data_bytes.decode('utf-8', errors='replace')
             self.console_output.insertPlainText(data)
             self.console_output.ensureCursorVisible()
-            
-            # Parse for XYZ
-            match_xyz = re.search(r"Result is XYZ:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
+
+            # Accumulate buffer for multi-line spectral parsing
+            self._stdout_buf += data
+            # Trim to last 32 KB to avoid unbounded growth
+            if len(self._stdout_buf) > 32768:
+                self._stdout_buf = self._stdout_buf[-32768:]
+
+            # --- Calibration state detection ---
+            buf_lower = self._stdout_buf.lower()
+            if (not self._calibrated and
+                    re.search(r"calibration\s+(successful|complete|ok)|calibrated\s+ok",
+                               buf_lower)):
+                self._calibrated = True
+                self.calib_status_label.setText("\U00002705  Calibr\u00e9")
+                self.calib_status_label.setStyleSheet(
+                    "color: #27ae60; font-weight: bold; padding: 4px;")
+                self.console_output.append(">> Sonde calibr\u00e9e \u2705")
+
+            # --- Detect result in this chunk ---
+            match_xyz = re.search(
+                r"Result is XYZ:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
+            match_yxy = re.search(
+                r"Result is Yxy:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
+
             if match_xyz:
                 X, Y, Z = map(float, match_xyz.groups())
-                self.update_color_display(X, Y, Z)
-                self.plot_spectrum(self.temp_file)
-                self.save_measurement_file()
-                return
+                self._last_xyz = (X, Y, Z)
+                self._pending_result = True
+                # Give PTY 300 ms to flush the spectral block before parsing
+                QTimer.singleShot(300, self._process_pending_result)
+            elif match_yxy:
+                Yv, x, y = map(float, match_yxy.groups())
+                self._last_xyz = yxy_to_xyz(Yv, x, y)
+                self._pending_result = True
+                QTimer.singleShot(300, self._process_pending_result)
 
-            # Parse for Yxy (if -x is used)
-            match_yxy = re.search(r"Result is Yxy:\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", data)
-            if match_yxy:
-                Y, x, y = map(float, match_yxy.groups())
-                X, Y_val, Z = yxy_to_xyz(Y, x, y)
-                self.update_color_display(X, Y_val, Z)
-                self.plot_spectrum(self.temp_file)
-                self.save_measurement_file()
-                return
-            
         except OSError:
             self.process_finished()
+
+    def _process_pending_result(self):
+        """Called 300 ms after a 'Result is' line to give the spectrum time to arrive."""
+        if not self._pending_result:
+            return
+        self._pending_result = False
+
+        X, Y, Z = self._last_xyz
+        self.update_color_display(X, Y, Z)
+
+        spec_written = self._write_spectrum_from_buffer()
+        if spec_written:
+            self.plot_spectrum(self.temp_file)
+            self.save_measurement_file()
+        else:
+            self.console_output.append(
+                "(Pas de donn\u00e9es spectrales dans la sortie — v\u00e9rifiez que l'instrument supporte le mode spectral)")
+
+    def _write_spectrum_from_buffer(self):
+        """
+        Parse a spectral block from the accumulated stdout buffer and write
+        a minimal CGATS .sp file so plot_spectrum() can display it.
+
+        spotread prints (when the device supports it):
+          Radiometric spectrum, 380 nm to 730 nm at 10 nm increments, 36 values:
+             0.083   0.099  ...
+        """
+        m = re.search(
+            r"[Rr]adiometric\s+spectrum[^,]*,\s*(\d+)\s*nm\s+to\s+(\d+)\s*nm"
+            r"\s+at\s+(\d+)\s*nm\s+increments[^:]*:\s*\n([\d\.\s]+)",
+            self._stdout_buf
+        )
+        if not m:
+            return False
+
+        start_nm = int(m.group(1))
+        end_nm   = int(m.group(2))
+        step_nm  = int(m.group(3))
+        raw_vals = m.group(4).split()
+
+        wavelengths = list(range(start_nm, end_nm + step_nm, step_nm))
+        values = []
+        for v in raw_vals:
+            try:
+                values.append(float(v))
+            except ValueError:
+                pass
+            if len(values) == len(wavelengths):
+                break
+
+        if not values or len(values) != len(wavelengths):
+            return False
+
+        header   = " ".join(f"NM_{wl}" for wl in wavelengths)
+        data_row = " ".join(f"{v:.6f}" for v in values)
+        cgats = (
+            f"CGATS.17\n"
+            f"ORIGINATOR \"spotread\"\n"
+            f"NUMBER_OF_FIELDS {len(wavelengths)}\n"
+            f"BEGIN_DATA_FORMAT\n{header}\nEND_DATA_FORMAT\n"
+            f"NUMBER_OF_SETS 1\n"
+            f"BEGIN_DATA\n{data_row}\nEND_DATA\n"
+        )
+        try:
+            with open(self.temp_file, 'w') as f:
+                f.write(cgats)
+            return True
+        except Exception as e:
+            self.console_output.append(f"Erreur \u00e9criture spectre: {e}")
+            return False
 
     def process_finished(self):
         if self.notifier:
             self.notifier.setEnabled(False)
             self.notifier = None
-        
+
         if self.master_fd is not None:
             try:
                 os.close(self.master_fd)
             except OSError:
                 pass
             self.master_fd = None
-            
+
         self.subprocess = None
-        
+        self._pending_result = False
+
         self.console_output.append("Process Finished.")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.measure_btn.setEnabled(False)
         self.calibrate_btn.setEnabled(False)
+        self.refresh_instr_btn.setEnabled(True)
         self.instrument_combo.setEnabled(True)
         self.mode_combo.setEnabled(True)
+        # Reset calibration indicator
+        self._calibrated = False
+        self.calib_status_label.setText("\U0001f534  Non calibr\u00e9")
+        self.calib_status_label.setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;")
+
+    # ------------------------------------------------------------------
+    # Instrument enumeration
+    # ------------------------------------------------------------------
+    def enumerate_instruments(self):
+        """Launch InstrumentEnumeratorThread to populate the instrument combo."""
+        # Stop any still-running enumeration before starting a new one
+        if self._instr_thread is not None and self._instr_thread.isRunning():
+            self._instr_thread.quit()
+            self._instr_thread.wait(500)
+        self.instrument_combo.setEnabled(False)
+        self.refresh_instr_btn.setEnabled(False)
+        self.instrument_combo.clear()
+        self.instrument_combo.addItem("Recherche...", None)
+        self._instr_thread = InstrumentEnumeratorThread()  # no parent — lives in its own thread
+        self._instr_thread.debug_output.connect(
+            lambda txt: self.console_output.append("[spotread -?]\n" + txt[:500]))
+        self._instr_thread.instruments_found.connect(self.on_instruments_found)
+        self._instr_thread.start()
+
+    def on_instruments_found(self, instruments: dict):
+        """Populate instrument combo from enumeration results."""
+        self.instrument_combo.clear()
+        if instruments:
+            for idx, name in sorted(instruments.items()):
+                self.instrument_combo.addItem(f"{idx}: {name}", idx)
+            self.console_output.append(
+                f"Instruments d\u00e9tect\u00e9s: {len(instruments)}")
+        else:
+            self.instrument_combo.addItem("(aucun instrument d\u00e9tect\u00e9)", None)
+            self.console_output.append(
+                "Aucun instrument d\u00e9tect\u00e9 — v\u00e9rifiez la connexion USB et qu'ArgyllCMS est install\u00e9.")
+        # Only re-enable these controls when no measurement session is active
+        session_idle = self.subprocess is None or self.subprocess.poll() is not None
+        self.instrument_combo.setEnabled(session_idle)
+        self.refresh_instr_btn.setEnabled(session_idle)
 
     def select_save_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Choisir le dossier de sauvegarde")
