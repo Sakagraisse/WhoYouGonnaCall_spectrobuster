@@ -3,8 +3,6 @@ import os
 import copy
 import subprocess
 import time
-import queue
-import threading
 import pty
 import shutil
 from datetime import datetime
@@ -121,7 +119,7 @@ class InstrumentEnumeratorThread(QThread):
 
     def run(self):
         instruments = {}
-        raw_lines = []
+        raw = ""
 
         try:
             # Add common ArgyllCMS paths on macOS (Homebrew, manual installs, etc.)
@@ -130,74 +128,31 @@ class InstrumentEnumeratorThread(QThread):
                      os.path.expanduser("~/bin")]
             env["PATH"] = ":".join(extra) + ":" + env.get("PATH", "")
 
-            proc = subprocess.Popen(
+            proc = subprocess.run(
                 ["spotread", "-?"],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.STDOUT,  # merge stderr so we catch either stream
                 stdin=subprocess.DEVNULL,
                 env=env,
+                timeout=20,
             )
+            raw = proc.stdout.decode("utf-8", errors="replace")
 
-            # Use a reader thread + queue to avoid BufferedReader/select() mismatch:
-            # select() checks the OS fd, but Python's BufferedReader may have already
-            # drained the pipe into its internal buffer — so select() reports "no data"
-            # even when lines are ready.  Blocking readline() in a daemon thread + Queue
-            # avoids this entirely.
-            line_q = queue.Queue()
-
-            def _reader():
-                try:
-                    for raw_line in proc.stdout:
-                        line_q.put(raw_line)
-                finally:
-                    line_q.put(None)  # sentinel: EOF
-
-            reader_thread = threading.Thread(target=_reader, daemon=True)
-            reader_thread.start()
-
-            in_c_section = False
-            deadline = time.monotonic() + 10.0  # hard safety limit
-
-            while time.monotonic() < deadline:
-                try:
-                    item = line_q.get(timeout=0.3)
-                except queue.Empty:
-                    if proc.poll() is not None:
-                        break
-                    continue
-
-                if item is None:  # EOF sentinel
-                    break
-
-                line = item.decode("utf-8", errors="replace").rstrip("\n")
-                raw_lines.append(line)
-
-                if re.search(r"\s-c\s", line):
-                    in_c_section = True
-                    continue
-
-                if in_c_section:
-                    m = re.match(r"\s+(\d+)\s+=\s+'(.+)'", line)
-                    if m:
-                        instruments[int(m.group(1))] = m.group(2)
-                        continue
-                    # End of -c section: next option flag — kill before USB connect
-                    if re.match(r"\s+-[a-zA-Z]", line):
-                        proc.kill()
-                        proc.wait()
-                        break
-
-            # Ensure process is gone in all cases (deadline or early exit)
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-
+        except subprocess.TimeoutExpired as e:
+            # Keep partial output if spotread takes too long.
+            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
+            if not raw:
+                raw = "[spotread -? a expiré sans produire de sortie — vérifiez ArgyllCMS]"
         except FileNotFoundError:
-            raw_lines = ["[spotread non trouvé — ArgyllCMS installé et dans le PATH ?]"]
+            raw = "[spotread non trouvé — ArgyllCMS installé et dans le PATH ?]"
         except Exception as e:
-            raw_lines = [f"[Erreur énumération: {e}]"]
+            raw = f"[Erreur énumération: {e}]"
 
-        raw = "\n".join(raw_lines)
+        # Parse all instrument lines globally. This is robust even if the
+        # help text layout changes or wraps differently between Argyll versions.
+        for m in re.finditer(r"(?m)^\s*(\d+)\s*=\s*'([^']+)'\s*$", raw):
+            instruments[int(m.group(1))] = m.group(2)
+
         self.debug_output.emit(raw)
         self.instruments_found.emit(instruments)
 
