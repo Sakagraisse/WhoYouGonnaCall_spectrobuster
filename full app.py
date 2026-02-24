@@ -1,6 +1,7 @@
 import sys
 import os
 import copy
+import json
 import subprocess
 import time
 import pty
@@ -10,7 +11,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox,
-                             QLineEdit, QSizePolicy, QScrollArea, QFormLayout, QGridLayout, QCheckBox)
+                             QLineEdit, QSizePolicy, QScrollArea, QFormLayout, QGridLayout, QCheckBox,
+                             QFrame)
 from PyQt6.QtCore import Qt, QTimer, QSocketNotifier, QThread, pyqtSignal
 
 try:
@@ -194,30 +196,39 @@ class SpectrumPlotter(QMainWindow):
         self.setWindowTitle('Spectre Plotter & ArgyllCMS Interface')
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet("""
+            QMainWindow {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                            stop:0 #dfe4ea, stop:0.45 #d7dde5, stop:1 #e5eaef);
+            }
+            QWidget#mainSurface {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                            stop:0 #dfe4ea, stop:0.45 #d7dde5, stop:1 #e5eaef);
+            }
             QWidget {
                 font-size: 12px;
                 color: #1f2933;
             }
             QGroupBox {
-                font-weight: bold;
-                border: 1px solid #d3dce6;
-                border-radius: 8px;
+                font-weight: 600;
+                border: 1px solid #d8e1ec;
+                border-radius: 10px;
                 margin-top: 10px;
-                padding: 8px;
-                background-color: #fafbfd;
+                padding: 10px;
+                background-color: #ffffff;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 0 6px;
+                color: #334e68;
             }
             QPushButton {
                 background-color: #2f6fda;
                 color: white;
                 border: none;
-                padding: 6px 10px;
-                border-radius: 6px;
-                min-height: 30px;
+                padding: 7px 12px;
+                border-radius: 8px;
+                min-height: 32px;
                 min-width: 80px;
                 font-weight: 600;
             }
@@ -227,32 +238,57 @@ class SpectrumPlotter(QMainWindow):
             QPushButton:hover:!disabled {
                 background-color: #245fc3;
             }
+            QPushButton#secondaryButton {
+                background-color: #edf2f9;
+                color: #243b53;
+                border: 1px solid #c8d5e6;
+            }
+            QPushButton#secondaryButton:hover:!disabled {
+                background-color: #e0e9f5;
+            }
             QLineEdit, QComboBox {
                 background-color: #ffffff;
                 border: 1px solid #d3dce6;
-                border-radius: 6px;
-                padding: 5px;
-                min-height: 28px;
+                border-radius: 8px;
+                padding: 6px;
+                min-height: 30px;
             }
             QTextEdit {
                 background-color: #ffffff;
                 border: 1px solid #d3dce6;
-                border-radius: 6px;
-                padding: 4px;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QScrollArea {
+                border: none;
+            }
+            QGroupBox#argyllControlsGroup {
+                border: 1px solid #d8e1ec;
+                border-radius: 10px;
+                background-color: #ffffff;
+                padding: 10px;
+                margin-top: 10px;
+            }
+            QGroupBox#argyllControlsGroup::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+                color: #334e68;
             }
         """)
 
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("mainSurface")
         self.setCentralWidget(self.central_widget)
 
         # Main Layout
         self.main_layout = QHBoxLayout(self.central_widget)
-        self.main_layout.setContentsMargins(12, 12, 12, 12)
-        self.main_layout.setSpacing(12)
+        self.main_layout.setContentsMargins(14, 14, 14, 14)
+        self.main_layout.setSpacing(14)
 
         # --- Left Panel: Controls & Console ---
         self.left_panel = QWidget()
-        self.left_panel.setMinimumWidth(260)
+        self.left_panel.setMinimumWidth(320)
         self.left_layout = QVBoxLayout(self.left_panel)
         self.left_layout.setSpacing(10)
 
@@ -260,11 +296,12 @@ class SpectrumPlotter(QMainWindow):
         self.left_scroll.setWidget(self.left_panel)
         self.left_scroll.setWidgetResizable(True)
         self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.left_scroll.setMinimumWidth(280)
+        self.left_scroll.setMinimumWidth(340)
         self.main_layout.addWidget(self.left_scroll, 1)
 
         # ArgyllCMS Controls Group
         self.controls_group = QGroupBox("ArgyllCMS Controls")
+        self.controls_group.setObjectName("argyllControlsGroup")
         self.controls_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         controls_outer = QVBoxLayout()
         controls_outer.setSpacing(8)
@@ -284,6 +321,7 @@ class SpectrumPlotter(QMainWindow):
         self.instrument_combo.addItem("-- Recherche... --", None)
         instr_row_layout.addWidget(self.instrument_combo, 1)
         self.refresh_instr_btn = QPushButton("\U0001f504")
+        self.refresh_instr_btn.setObjectName("secondaryButton")
         self.refresh_instr_btn.setFixedSize(34, 34)
         self.refresh_instr_btn.setToolTip("Actualiser la liste des instruments")
         self.refresh_instr_btn.clicked.connect(self.enumerate_instruments)
@@ -333,6 +371,7 @@ class SpectrumPlotter(QMainWindow):
         self.save_folder_input.setPlaceholderText("Dossier de sauvegarde...")
         folder_row.addWidget(self.save_folder_input, 1)
         self.change_folder_btn = QPushButton("Parcourir")
+        self.change_folder_btn.setObjectName("secondaryButton")
         self.change_folder_btn.setFixedWidth(80)
         self.change_folder_btn.clicked.connect(self.select_save_folder)
         folder_row.addWidget(self.change_folder_btn)
@@ -401,6 +440,7 @@ class SpectrumPlotter(QMainWindow):
         self.console_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: 'Menlo', 'Courier New', monospace;")
         console_layout.addWidget(self.console_output)
         clear_console_btn = QPushButton("Effacer console")
+        clear_console_btn.setObjectName("secondaryButton")
         clear_console_btn.clicked.connect(self.console_output.clear)
         console_layout.addWidget(clear_console_btn)
         self.console_group.setLayout(console_layout)
@@ -409,57 +449,134 @@ class SpectrumPlotter(QMainWindow):
         # Color Equivalence Group
         self.color_group = QGroupBox("Colorimétrie & CRI")
         self.color_layout = QVBoxLayout()
+        self.color_layout.setSpacing(4)
         self.color_group.setLayout(self.color_layout)
         self.color_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.color_patch = QLabel()
-        self.color_patch.setFixedSize(100, 100)
-        self.color_patch.setStyleSheet("background-color: gray; border: 1px solid black;")
-        self.color_layout.addWidget(self.color_patch, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.color_patch.setFixedHeight(18)
+        self.color_patch.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.color_patch.setStyleSheet("background-color: gray; border: 1px solid #9aa5b1; border-radius: 5px;")
+        self.color_layout.addWidget(self.color_patch)
 
         self.color_values_label = QLabel("XYZ: - - -\nRGB: - - -\nLab: - - -")
         self.color_values_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.color_values_label.setStyleSheet("font-size: 11px;")
+        self.color_values_label.setVisible(False)
         self.color_layout.addWidget(self.color_values_label)
 
         self.cri_label = QLabel("CRI (Ra): -")
         self.cri_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cri_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.cri_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.cri_label.setVisible(False)
         self.color_layout.addWidget(self.cri_label)
 
         self.cri_details_label = QLabel("R9-R15:")
+        self.cri_details_label.setStyleSheet("font-size: 11px;")
+        self.cri_details_label.setVisible(False)
         self.color_layout.addWidget(self.cri_details_label)
 
         self.cri_details = QTextEdit()
         self.cri_details.setReadOnly(True)
-        self.cri_details.setMaximumHeight(150)
+        self.cri_details.setMaximumHeight(120)
+        self.cri_details.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.cri_details.setStyleSheet("font-family: 'Menlo', 'Courier New', monospace; font-size: 10px;")
+        self.cri_details.setPlainText("XYZ: -\nRGB: -\nLab: -\nCRI (Ra): -")
         self.color_layout.addWidget(self.cri_details)
+        self.color_group.setMaximumHeight(180)
 
-        self.left_layout.addWidget(self.color_group)
         self.left_layout.addStretch(1)
 
-        # --- Right Panel: Plot ---
+        # --- Right Panel: Spectre + CIE + Historique ---
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout(self.right_panel)
         self.right_layout.setSpacing(8)
-        self.main_layout.addWidget(self.right_panel, 2)
+        self.right_layout.setContentsMargins(2, 2, 2, 2)
+        self.main_layout.addWidget(self.right_panel, 3)
 
-        self.file_actions_row = QHBoxLayout()
-        self.file_actions_row.setSpacing(8)
-        self.open_button = QPushButton('Choisir le fichier (Manuel)')
+        self.analysis_row = QHBoxLayout()
+        self.analysis_row.setSpacing(6)
+
+        self.spectrum_group = QGroupBox("Spectre")
+        spectrum_layout = QVBoxLayout(self.spectrum_group)
+        spectrum_layout.setContentsMargins(2, 2, 2, 2)
+        self.canvas = FigureCanvas(plt.Figure(figsize=(6.2, 6.2), dpi=100))
+        self.canvas.setMinimumSize(440, 440)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        spectrum_layout.addWidget(self.canvas)
+        self.analysis_row.addWidget(self.spectrum_group, 5)
+
+        self.cie_group = QGroupBox("CIE 1931 xy")
+        cie_layout = QVBoxLayout(self.cie_group)
+        cie_layout.setContentsMargins(3, 3, 3, 3)
+        self.cie_canvas = FigureCanvas(plt.Figure(figsize=(4.2, 4.2), dpi=100))
+        self.cie_canvas.setMinimumSize(240, 240)
+        self.cie_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        cie_layout.addWidget(self.cie_canvas)
+
+        self.cie_value_label = QLabel("x: -   y: -")
+        self.cie_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cie_value_label.setStyleSheet("font-weight: 600; color: #334e68;")
+        cie_layout.addWidget(self.cie_value_label)
+        self.cie_group.setMaximumHeight(330)
+
+        self.right_info_col = QWidget()
+        self.right_info_layout = QVBoxLayout(self.right_info_col)
+        self.right_info_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_info_layout.setSpacing(6)
+        self.right_info_layout.addWidget(self.cie_group, 2)
+        self.right_info_layout.addWidget(self.color_group, 2)
+
+        self.analysis_row.addWidget(self.right_info_col, 2)
+
+        self.right_layout.addLayout(self.analysis_row, 1)
+
+        self.recent_group = QGroupBox("Mémoire: 6 dernières mesures")
+        recent_layout = QVBoxLayout(self.recent_group)
+        recent_layout.setContentsMargins(8, 8, 8, 8)
+        recent_layout.setSpacing(6)
+
+        recent_header = QHBoxLayout()
+        recent_header.setSpacing(6)
+        self.recent_hint_label = QLabel("Clique une mesure pour recharger")
+        self.recent_hint_label.setStyleSheet("color: #486581;")
+        recent_header.addWidget(self.recent_hint_label, 1)
+        recent_layout.addLayout(recent_header)
+
+        self.recent_body = QHBoxLayout()
+        self.recent_body.setSpacing(8)
+
+        self.recent_actions_col = QVBoxLayout()
+        self.recent_actions_col.setSpacing(6)
+        self.open_button = QPushButton('Recharger fichier')
+        self.open_button.setObjectName("secondaryButton")
         self.open_button.clicked.connect(self.open_file)
-        self.file_actions_row.addWidget(self.open_button)
-        self.save_button = QPushButton('Sauvegarder le graphique')
-        self.save_button.clicked.connect(self.save_plot)
-        self.file_actions_row.addWidget(self.save_button)
-        self.right_layout.addLayout(self.file_actions_row)
+        self.recent_actions_col.addWidget(self.open_button)
 
-        self.canvas = FigureCanvas(plt.Figure(figsize=(12, 9), dpi=100))
-        self.canvas.setMinimumSize(800, 600)
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.right_layout.addWidget(self.canvas)
+        self.save_button = QPushButton('Sauvegarder graphe')
+        self.save_button.setObjectName("secondaryButton")
+        self.save_button.clicked.connect(self.save_plot)
+        self.recent_actions_col.addWidget(self.save_button)
+        self.recent_actions_col.addStretch(1)
+        self.recent_body.addLayout(self.recent_actions_col)
+
+        self.recent_scroll = QScrollArea()
+        self.recent_scroll.setWidgetResizable(True)
+        self.recent_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.recent_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.recent_scroll.setMinimumHeight(110)
+
+        self.recent_container = QWidget()
+        self.recent_row = QHBoxLayout(self.recent_container)
+        self.recent_row.setContentsMargins(4, 4, 4, 4)
+        self.recent_row.setSpacing(8)
+        self.recent_scroll.setWidget(self.recent_container)
+        self.recent_body.addWidget(self.recent_scroll, 1)
+        recent_layout.addLayout(self.recent_body)
+        self.right_layout.addWidget(self.recent_group)
 
         self.ax = self.canvas.figure.subplots()
+        self.cie_ax = self.cie_canvas.figure.subplots()
 
         # Process Handling
         self.subprocess = None
@@ -471,6 +588,9 @@ class SpectrumPlotter(QMainWindow):
         self.base_save_dir.mkdir(parents=True, exist_ok=True)
         self.save_folder_input.setText(str(self.base_save_dir))
         self.last_saved_mtime = None
+        self.recent_history_file = self.base_save_dir / "recent_measurements.json"
+        self.recent_measurements = []
+        self._cie_point_artist = None
 
         # --- Session state ---
         self._calibrated = False
@@ -480,8 +600,188 @@ class SpectrumPlotter(QMainWindow):
         self._instr_thread = None
 
         # Enumerate instruments at startup
+        self._init_cie_plot()
+        self._load_recent_measurements()
+        self._refresh_recent_carousel()
         self.enumerate_instruments()
         self._update_status_banner()
+
+    def _init_cie_plot(self):
+        self.cie_ax.clear()
+        self.cie_ax.set_title("Diagramme CIE 1931", fontsize=10)
+        self.cie_ax.set_xlabel("x", fontsize=9)
+        self.cie_ax.set_ylabel("y", fontsize=9)
+        self.cie_ax.set_xlim(0.0, 0.8)
+        self.cie_ax.set_ylim(0.0, 0.9)
+        self.cie_ax.set_aspect('equal', adjustable='box')
+        self.cie_ax.set_box_aspect(1)
+        self.cie_ax.grid(True, alpha=0.25)
+
+        try:
+            cmfs = colour.MSDS_CMFS["CIE 1931 2 Degree Standard Observer"].copy()
+            cmfs = cmfs.align(colour.SpectralShape(380, 780, 5))
+            locus_xy = colour.XYZ_to_xy(cmfs.values)
+            self.cie_ax.plot(locus_xy[..., 0], locus_xy[..., 1], color="#334e68", linewidth=1.2)
+            if len(locus_xy) > 0:
+                self.cie_ax.plot([locus_xy[-1, 0], locus_xy[0, 0]], [locus_xy[-1, 1], locus_xy[0, 1]], color="#334e68", linewidth=1.2)
+        except Exception as exc:
+            self.console_output.append(f"Erreur tracé CIE: {exc}")
+
+        self._cie_point_artist = self.cie_ax.scatter([0.33], [0.33], s=65, color="#2f6fda", edgecolors="black", zorder=5)
+        self.cie_canvas.figure.subplots_adjust(left=0.10, right=0.98, bottom=0.10, top=0.93)
+        self.cie_canvas.draw_idle()
+
+    def _update_cie_point(self, X: float, Y: float, Z: float):
+        total = X + Y + Z
+        if total <= 0:
+            self.cie_value_label.setText("x: -   y: -")
+            return
+
+        x = X / total
+        y = Y / total
+        x = float(np.clip(x, 0.0, 0.8))
+        y = float(np.clip(y, 0.0, 0.9))
+
+        r, g, b = xyz_to_rgb(X, Y, Z)
+        marker_color = (r / 255.0, g / 255.0, b / 255.0)
+        if self._cie_point_artist is None:
+            self._cie_point_artist = self.cie_ax.scatter([x], [y], s=65, color=marker_color, edgecolors="black", zorder=5)
+        else:
+            self._cie_point_artist.set_offsets(np.array([[x, y]]))
+            self._cie_point_artist.set_color([marker_color])
+
+        self.cie_value_label.setText(f"x: {x:.4f}   y: {y:.4f}")
+        self.cie_canvas.draw_idle()
+
+    def _load_recent_measurements(self):
+        self.recent_measurements = []
+        if not self.recent_history_file.exists():
+            return
+
+        try:
+            with open(self.recent_history_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                cleaned = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    path = item.get("path", "")
+                    if path and Path(path).exists():
+                        cleaned.append(item)
+                self.recent_measurements = cleaned[:6]
+        except Exception as exc:
+            self.console_output.append(f"Erreur chargement historique: {exc}")
+
+    def _save_recent_measurements(self):
+        try:
+            self.base_save_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.recent_history_file, "w", encoding="utf-8") as f:
+                json.dump(self.recent_measurements[:6], f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            self.console_output.append(f"Erreur sauvegarde historique: {exc}")
+
+    def _add_recent_measurement(self, path: Path, xyz=None):
+        p = str(path)
+        self.recent_measurements = [item for item in self.recent_measurements if item.get("path") != p]
+
+        x = y = None
+        if xyz is not None:
+            X, Y, Z = xyz
+            total = X + Y + Z
+            if total > 0:
+                x = float(X / total)
+                y = float(Y / total)
+
+        entry = {
+            "name": path.stem,
+            "path": p,
+            "timestamp": datetime.now().strftime("%d/%m %H:%M"),
+            "x": x,
+            "y": y,
+        }
+        self.recent_measurements.insert(0, entry)
+        self.recent_measurements = self.recent_measurements[:6]
+        self._save_recent_measurements()
+        self._refresh_recent_carousel()
+
+    def _reload_measurement_from_history(self, path_str: str):
+        path = Path(path_str)
+        if not path.exists():
+            QMessageBox.warning(self, "Mesure introuvable", f"Fichier absent:\n{path}")
+            self.recent_measurements = [item for item in self.recent_measurements if item.get("path") != path_str]
+            self._save_recent_measurements()
+            self._refresh_recent_carousel()
+            return
+
+        self.plot_spectrum(str(path))
+        self.console_output.append(f"Mesure rechargée: {path}")
+
+    def _refresh_recent_carousel(self):
+        while self.recent_row.count():
+            item = self.recent_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not self.recent_measurements:
+            empty_label = QLabel("Aucune mesure mémorisée pour le moment.")
+            empty_label.setStyleSheet("color: #829ab1; padding: 8px;")
+            self.recent_row.addWidget(empty_label)
+            self.recent_row.addStretch(1)
+            return
+
+        for item in self.recent_measurements[:6]:
+            card = QFrame()
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card.setStyleSheet("QFrame { background: #f7f9fc; border: 1px solid #d8e1ec; border-radius: 8px; }")
+            card.setFixedWidth(180)
+
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(6)
+
+            patch = QLabel()
+            patch.setFixedHeight(20)
+            patch_color = "#cbd2d9"
+            if item.get("x") is not None and item.get("y") is not None:
+                try:
+                    x = float(item["x"])
+                    y = float(item["y"])
+                    if y > 0:
+                        X = x / y
+                        Y = 1.0
+                        Z = (1.0 - x - y) / y
+                        rr, gg, bb = xyz_to_rgb(X * 100.0, Y * 100.0, Z * 100.0)
+                        patch_color = f"rgb({rr}, {gg}, {bb})"
+                except Exception:
+                    patch_color = "#cbd2d9"
+            patch.setStyleSheet(f"background: {patch_color}; border-radius: 4px;")
+            card_layout.addWidget(patch)
+
+            name_label = QLabel(item.get("name", "mesure"))
+            name_label.setStyleSheet("font-weight: 600; color: #243b53;")
+            card_layout.addWidget(name_label)
+
+            meta_label = QLabel(item.get("timestamp", ""))
+            meta_label.setStyleSheet("color: #627d98; font-size: 11px;")
+            card_layout.addWidget(meta_label)
+
+            xy_txt = "xy: -"
+            if item.get("x") is not None and item.get("y") is not None:
+                xy_txt = f"xy: {item['x']:.3f}, {item['y']:.3f}"
+            xy_label = QLabel(xy_txt)
+            xy_label.setStyleSheet("color: #486581; font-size: 11px;")
+            card_layout.addWidget(xy_label)
+
+            reload_btn = QPushButton("Recharger")
+            reload_btn.setObjectName("secondaryButton")
+            reload_btn.clicked.connect(lambda _, p=item.get("path", ""): self._reload_measurement_from_history(p))
+            card_layout.addWidget(reload_btn)
+
+            self.recent_row.addWidget(card)
+
+        self.recent_row.addStretch(1)
 
     def start_session(self):
         if self._oneshot_busy:
@@ -646,12 +946,16 @@ class SpectrumPlotter(QMainWindow):
 
         if os.path.exists(self.temp_file):
             self.plot_spectrum(self.temp_file)
-            self.save_measurement_file()
+            saved_path = self.save_measurement_file()
+            if saved_path:
+                self._add_recent_measurement(saved_path, xyz=(X, Y, Z))
         else:
             spec_written = self._write_spectrum_from_buffer()
             if spec_written:
                 self.plot_spectrum(self.temp_file)
-                self.save_measurement_file()
+                saved_path = self.save_measurement_file()
+                if saved_path:
+                    self._add_recent_measurement(saved_path, xyz=(X, Y, Z))
 
     def _update_mode_guidance(self):
         mode_arg = self.mode_combo.currentData()
@@ -796,7 +1100,9 @@ class SpectrumPlotter(QMainWindow):
         spec_written = self._write_spectrum_from_buffer()
         if spec_written:
             self.plot_spectrum(self.temp_file)
-            self.save_measurement_file()
+            saved_path = self.save_measurement_file()
+            if saved_path:
+                self._add_recent_measurement(saved_path, xyz=(X, Y, Z))
         else:
             self.console_output.append(
                 "(Pas de donn\u00e9es spectrales dans la sortie — v\u00e9rifiez que l'instrument supporte le mode spectral)")
@@ -926,8 +1232,11 @@ class SpectrumPlotter(QMainWindow):
         if folder:
             self.base_save_dir = Path(folder)
             self.base_save_dir.mkdir(parents=True, exist_ok=True)
+            self.recent_history_file = self.base_save_dir / "recent_measurements.json"
             self.save_folder_input.setText(str(self.base_save_dir))
             self.console_output.append(f"Dossier de sauvegarde: {self.base_save_dir}")
+            self._load_recent_measurements()
+            self._refresh_recent_carousel()
 
     def sanitize_measurement_name(self, name):
         cleaned = re.sub(r"[^\w\-]+", "_", name.strip())
@@ -946,15 +1255,15 @@ class SpectrumPlotter(QMainWindow):
 
     def save_measurement_file(self):
         if not os.path.exists(self.temp_file):
-            return
+            return None
 
         try:
             mtime = os.path.getmtime(self.temp_file)
         except OSError:
-            return
+            return None
 
         if self.last_saved_mtime is not None and mtime <= self.last_saved_mtime:
-            return
+            return None
 
         date_folder = self.base_save_dir / datetime.now().strftime("%Y-%m-%d")
         date_folder.mkdir(parents=True, exist_ok=True)
@@ -965,18 +1274,30 @@ class SpectrumPlotter(QMainWindow):
             shutil.move(self.temp_file, destination)
             self.last_saved_mtime = mtime
             self.console_output.append(f"Mesure sauvegardée: {destination}")
+            return destination
         except Exception as exc:
             self.console_output.append(f"Erreur sauvegarde mesure: {exc}")
+            return None
 
     def update_color_display(self, X, Y, Z):
         r, g, b = xyz_to_rgb(X, Y, Z)
-        self.color_patch.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid black;")
+        self.color_patch.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid #9aa5b1; border-radius: 5px;")
         self.color_values_label.setText(f"XYZ: {X:.2f} {Y:.2f} {Z:.2f}\nRGB: {r} {g} {b}")
+        details = (
+            f"XYZ: {X:.2f} {Y:.2f} {Z:.2f}\n"
+            f"RGB: {r} {g} {b}\n"
+            f"Lab: -\n"
+            f"CRI (Ra): -\n"
+            f"R1-R15: -"
+        )
+        self.cri_details.setPlainText(details)
+        self._update_cie_point(X, Y, Z)
 
     def open_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, 'Open File', '', 'Spectre Files (*.sp);;All Files (*)')
         if file_path:
             self.plot_spectrum(file_path)
+            self._add_recent_measurement(Path(file_path))
 
     def plot_spectrum(self, file_path):
         if not os.path.exists(file_path):
@@ -1208,22 +1529,25 @@ class SpectrumPlotter(QMainWindow):
                 r_values = {k: v.Q_a for k, v in cri_res.Q_as.items()}
                 
                 # Update UI
-                self.color_patch.setStyleSheet(f"background-color: rgb({R_disp}, {G_disp}, {B_disp}); border: 1px solid black;")
+                self.color_patch.setStyleSheet(f"background-color: rgb({R_disp}, {G_disp}, {B_disp}); border: 1px solid #9aa5b1; border-radius: 5px;")
                 self.color_values_label.setText(f"XYZ: {X:.2f} {Y:.2f} {Z:.2f}\n"
                                                 f"RGB: {R_disp} {G_disp} {B_disp}\n"
                                                 f"Lab: {L:.2f} {a:.2f} {b_val:.2f}")
+                self._update_cie_point(X, Y, Z)
                 
                 self.cri_label.setText(f"CRI (Ra): {Ra:.1f}")
-                
-                r_text = "--- General (Ra) ---\n"
-                for i in range(1, 9):
-                    r_text += f"R{i}: {r_values.get(i, 0):.1f}  "
-                    if i == 4: r_text += "\n"
-                r_text += "\n\n--- Special ---\n"
-                for i in range(9, 16):
-                    r_text += f"R{i}: {r_values.get(i, 0):.1f}  "
-                    if i == 12: r_text += "\n"
-                self.cri_details.setText(r_text)
+
+                full_lines = [
+                    f"XYZ: {X:.2f} {Y:.2f} {Z:.2f}",
+                    f"RGB: {R_disp} {G_disp} {B_disp}",
+                    f"Lab: {L:.2f} {a:.2f} {b_val:.2f}",
+                    f"CRI (Ra): {Ra:.1f}",
+                    "",
+                    "-- Indices CRI --",
+                ]
+                for i in range(1, 16):
+                    full_lines.append(f"R{i}: {r_values.get(i, 0):.1f}")
+                self.cri_details.setPlainText("\n".join(full_lines))
 
             except Exception as e:
                 self.console_output.append(f"Colorimetry Calc Error: {e}")
@@ -1232,24 +1556,50 @@ class SpectrumPlotter(QMainWindow):
             # -------------------------------
 
             self.ax.clear()
+            y_max = float(np.max(intensité)) if len(intensité) else 1.0
+            y_max = max(y_max, 1e-9)
 
-            # Add color patches for each wavelength interval
-            for i in range(len(longueur_onde) - 1):
-                color = wavelength_to_rgb(longueur_onde[i])
-                rect = patches.Rectangle((longueur_onde[i], 0), longueur_onde[i + 1] - longueur_onde[i], max(intensité),
-                                         color=color, alpha=0.3)
-                self.ax.add_patch(rect)
+            # Continuous spectral gradient background (true gradient, not discrete patches)
+            x_min = float(np.min(longueur_onde))
+            x_max = float(np.max(longueur_onde))
+            grad_wl = np.linspace(x_min, x_max, 512)
+            grad_rgb = np.array([wavelength_to_rgb(wl) for wl in grad_wl], dtype=float)
+            grad_img = np.repeat(grad_rgb[np.newaxis, :, :], 2, axis=0)
+            self.ax.imshow(
+                grad_img,
+                extent=[x_min, x_max, 0.0, y_max],
+                aspect='auto',
+                origin='lower',
+                alpha=0.35,
+                zorder=0,
+                interpolation='bicubic'
+            )
 
-            # Plot the data
-            self.ax.plot(longueur_onde, intensité, color='black')
+            # Plot spectral curve with polished style
+            self.ax.plot(longueur_onde, intensité, color='#102a43', linewidth=2.2, zorder=3)
+            self.ax.fill_between(longueur_onde, intensité, 0, color='#486581', alpha=0.08, zorder=2)
 
-            # Set labels and title
-            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=10)
-            self.ax.set_ylabel('Intensité', fontsize=10)
+            # Professional axes / typography
+            self.ax.set_facecolor('#ffffff')
+            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=11, color='#243b53', labelpad=8)
+            self.ax.set_ylabel('Intensité relative', fontsize=11, color='#243b53', labelpad=8)
             file_name = os.path.basename(file_path)
-            self.ax.set_title(f'Spectre : {file_name}', fontsize=12)
-            self.ax.tick_params(axis='both', which='major', labelsize=6)
-            self.canvas.figure.tight_layout()
+            self.ax.set_title(f'Spectre : {file_name}', fontsize=13, color='#102a43', pad=10, fontweight='600')
+            self.ax.tick_params(axis='both', which='major', labelsize=9, colors='#334e68')
+            self.ax.grid(True, which='major', color='#d9e2ec', linewidth=0.8, alpha=0.7)
+            self.ax.grid(True, which='minor', color='#e9eff5', linewidth=0.5, alpha=0.55)
+            self.ax.minorticks_on()
+            self.ax.set_xlim(x_min, x_max)
+            self.ax.set_ylim(0.0, y_max * 1.05)
+            self.ax.set_box_aspect(1)
+
+            for spine in ['top', 'right']:
+                self.ax.spines[spine].set_visible(False)
+            for spine in ['left', 'bottom']:
+                self.ax.spines[spine].set_color('#9fb3c8')
+                self.ax.spines[spine].set_linewidth(1.0)
+
+            self.canvas.figure.subplots_adjust(left=0.065, right=0.998, bottom=0.075, top=0.935)
             self.canvas.draw()
             
         except Exception as e:
@@ -1262,18 +1612,18 @@ class SpectrumPlotter(QMainWindow):
         if file_path:
             original_size = self.canvas.figure.get_size_inches()
             original_dpi = self.canvas.figure.get_dpi()
-            self.canvas.figure.set_size_inches(12, 9)
-            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=20)
-            self.ax.set_ylabel('Intensité', fontsize=20)
-            self.ax.title.set_fontsize(24)
-            self.ax.tick_params(axis='both', which='major', labelsize=16)
+            self.canvas.figure.set_size_inches(10, 10)
+            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=18)
+            self.ax.set_ylabel('Intensité relative', fontsize=18)
+            self.ax.title.set_fontsize(22)
+            self.ax.tick_params(axis='both', which='major', labelsize=14)
             self.canvas.figure.savefig(file_path, dpi=300)
             self.canvas.figure.set_size_inches(original_size)
             self.canvas.figure.set_dpi(original_dpi)
-            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=10)
-            self.ax.set_ylabel('Intensité', fontsize=10)
-            self.ax.title.set_fontsize(12)
-            self.ax.tick_params(axis='both', which='major', labelsize=6)
+            self.ax.set_xlabel('Longueur d\'onde (nm)', fontsize=11)
+            self.ax.set_ylabel('Intensité relative', fontsize=11)
+            self.ax.title.set_fontsize(13)
+            self.ax.tick_params(axis='both', which='major', labelsize=9)
             self.canvas.draw()
             self.console_output.append(f'Plot saved as {file_path}')
 
