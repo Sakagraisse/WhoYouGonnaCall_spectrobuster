@@ -2,6 +2,8 @@ import sys
 import os
 import copy
 import subprocess
+import select
+import time
 import pty
 import shutil
 from datetime import datetime
@@ -118,7 +120,8 @@ class InstrumentEnumeratorThread(QThread):
 
     def run(self):
         instruments = {}
-        raw = ""
+        raw_lines = []
+
         try:
             # Add common ArgyllCMS paths on macOS (Homebrew, manual installs, etc.)
             env = os.environ.copy()
@@ -126,45 +129,65 @@ class InstrumentEnumeratorThread(QThread):
                      os.path.expanduser("~/bin")]
             env["PATH"] = ":".join(extra) + ":" + env.get("PATH", "")
 
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 ["spotread", "-?"],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # merge stderr so we catch either stream
-                stdin=subprocess.DEVNULL,  # prevent blocking wait for keyboard input
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 env=env,
-                timeout=15,
             )
-            raw = proc.stdout.decode("utf-8", errors="replace")
-        except subprocess.TimeoutExpired as e:
-            # spotread can hang on USB enumeration even for -?
-            # Python keeps whatever was already printed in e.stdout — often enough to
-            # find the instrument list before the USB scan blocked.
-            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
-            if not raw:
-                raw = "[spotread -? a expiré sans produire de sortie — vérifiez ArgyllCMS]"
-        except FileNotFoundError:
-            raw = "[spotread non trouvé — ArgyllCMS installé et dans le PATH ?]"
-        except Exception as e:
-            raw = f"[Erreur énumération: {e}]"
 
-        self.debug_output.emit(raw)
+            # Read line-by-line; kill as soon as we've parsed the -c section,
+            # BEFORE spotread reaches "Connecting to the instrument.." and locks USB.
+            in_c_section = False
+            deadline = time.monotonic() + 10.0  # hard safety limit
 
-        # Parse lines matching:   N = 'Instrument name'
-        # which appear in the block after a line that contains " -c "
-        in_c_section = False
-        for line in raw.splitlines():
-            if re.search(r"\s-c\s", line):
-                in_c_section = True
-                continue
-            if in_c_section:
-                m = re.match(r"\s+(\d+)\s+=\s+'(.+)'", line)
-                if m:
-                    instruments[int(m.group(1))] = m.group(2)
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([proc.stdout], [], [], 0.2)
+                if not ready:
+                    # No data yet — check if process already exited
+                    if proc.poll() is not None:
+                        break
                     continue
-                # Stop when we hit the next option flag
-                if re.match(r"\s+-[a-zA-Z]", line):
-                    break
 
+                line_bytes = proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+                raw_lines.append(line)
+
+                if re.search(r"\s-c\s", line):
+                    in_c_section = True
+                    continue
+
+                if in_c_section:
+                    m = re.match(r"\s+(\d+)\s+=\s+'(.+)'", line)
+                    if m:
+                        instruments[int(m.group(1))] = m.group(2)
+                        continue
+                    # End of -c section: next option flag detected — kill now
+                    if re.match(r"\s+-[a-zA-Z]", line):
+                        proc.kill()
+                        proc.wait()
+                        break
+
+            else:
+                # Deadline reached — kill to avoid USB lock
+                proc.kill()
+                proc.wait()
+
+            # Ensure process is gone in all cases
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+        except FileNotFoundError:
+            raw_lines = ["[spotread non trouvé — ArgyllCMS installé et dans le PATH ?]"]
+        except Exception as e:
+            raw_lines = [f"[Erreur énumération: {e}]"]
+
+        raw = "\n".join(raw_lines)
+        self.debug_output.emit(raw)
         self.instruments_found.emit(instruments)
 
 
