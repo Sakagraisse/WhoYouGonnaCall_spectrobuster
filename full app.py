@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QWidget, QFileDialog, QLabel, QComboBox, QTextEdit, QGroupBox, QMessageBox,
-                             QLineEdit, QSizePolicy, QScrollArea, QFormLayout, QGridLayout)
+                             QLineEdit, QSizePolicy, QScrollArea, QFormLayout, QGridLayout, QCheckBox)
 from PyQt6.QtCore import Qt, QTimer, QSocketNotifier, QThread, pyqtSignal
 
 try:
@@ -264,11 +264,25 @@ class SpectrumPlotter(QMainWindow):
         self.mode_combo.addItem("Spot (Reflectance) [Default]", "")
         form.addRow("Mode :", self.mode_combo)
 
+        self.exec_mode_combo = QComboBox()
+        self.exec_mode_combo.addItem("Appel unique (-O) [recommandé]", "oneshot")
+        self.exec_mode_combo.addItem("Session interactive (PTY)", "interactive")
+        form.addRow("Exécution :", self.exec_mode_combo)
+
         self.measurement_name_input = QLineEdit()
         self.measurement_name_input.setPlaceholderText("ex: Lampe-01")
         form.addRow("Nom mesure :", self.measurement_name_input)
 
         controls_outer.addLayout(form)
+
+        self.skip_calibration_checkbox = QCheckBox("Réutiliser calibration si possible (-N)")
+        self.skip_calibration_checkbox.setChecked(True)
+        controls_outer.addWidget(self.skip_calibration_checkbox)
+
+        self.mode_help_label = QLabel("")
+        self.mode_help_label.setWordWrap(True)
+        self.mode_help_label.setStyleSheet("color: #444; font-size: 11px; padding: 2px;")
+        controls_outer.addWidget(self.mode_help_label)
 
         # --- Dossier de sauvegarde (inline) ---
         folder_row = QHBoxLayout()
@@ -325,6 +339,11 @@ class SpectrumPlotter(QMainWindow):
         controls_outer.addWidget(self.calib_status_label)
 
         self.left_layout.addWidget(self.controls_group)
+
+        self.mode_combo.currentIndexChanged.connect(self._update_mode_guidance)
+        self.exec_mode_combo.currentIndexChanged.connect(self._update_execution_mode_ui)
+        self._update_mode_guidance()
+        self._update_execution_mode_ui()
 
         # Console Output
         self.left_layout.addWidget(QLabel("Sortie Console:"))
@@ -410,22 +429,14 @@ class SpectrumPlotter(QMainWindow):
         self.enumerate_instruments()
 
     def start_session(self):
+        if self.exec_mode_combo.currentData() != "interactive":
+            self.console_output.append("Mode appel unique actif: utilisez ⚙ Calibrer puis ◉ Mesurer.")
+            return
+
         if self.subprocess and self.subprocess.poll() is None:
             return
 
-        # Build command: spotread -v -s <temp_file> [-c N] [mode]
-        args = ["spotread", "-v", "-s", self.temp_file]
-
-        # Instrument selection (-c index)
-        instr_idx = self.instrument_combo.currentIndex()
-        instr_data = self.instrument_combo.itemData(instr_idx)
-        if instr_data is not None:
-            args.extend(["-c", str(instr_data)])
-
-        # Mode flag
-        mode_arg = self.mode_combo.currentData()
-        if mode_arg:
-            args.append(mode_arg)
+        args = self._build_spotread_args(interactive=True)
 
         self.console_output.append(f"Starting: {' '.join(args)}")
 
@@ -467,6 +478,7 @@ class SpectrumPlotter(QMainWindow):
         self.refresh_instr_btn.setEnabled(False)
         self.instrument_combo.setEnabled(False)
         self.mode_combo.setEnabled(False)
+        self.exec_mode_combo.setEnabled(False)
 
     def stop_session(self):
         if self.subprocess and self.subprocess.poll() is None:
@@ -480,14 +492,142 @@ class SpectrumPlotter(QMainWindow):
             self.subprocess.kill()
         self.process_finished()
 
+    def _spotread_env(self):
+        env = os.environ.copy()
+        extra = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin",
+                 os.path.expanduser("~/bin")]
+        env["PATH"] = ":".join(extra) + ":" + env.get("PATH", "")
+        return env
+
+    def _build_spotread_args(self, interactive: bool, calibration_only: bool = False):
+        args = ["spotread", "-v"]
+
+        instr_idx = self.instrument_combo.currentIndex()
+        instr_data = self.instrument_combo.itemData(instr_idx)
+        if instr_data is not None:
+            args.extend(["-c", str(instr_data)])
+
+        mode_arg = self.mode_combo.currentData()
+        if mode_arg:
+            args.append(mode_arg)
+
+        if interactive:
+            args.extend(["-s", self.temp_file])
+            if self.skip_calibration_checkbox.isChecked():
+                args.append("-N")
+        else:
+            if calibration_only:
+                args.append("-O")
+            else:
+                args.extend(["-s", "-O", self.temp_file])
+                if self.skip_calibration_checkbox.isChecked():
+                    args.append("-N")
+
+        return args
+
+    def _set_calibrated_ui(self):
+        self._calibrated = True
+        self.calib_status_label.setText("✅  Calibré")
+        self.calib_status_label.setStyleSheet("color: #27ae60; font-weight: bold; padding: 4px;")
+
+    def _run_spotread_oneshot(self, calibration_only: bool = False):
+        args = self._build_spotread_args(interactive=False, calibration_only=calibration_only)
+        self.console_output.append(f"Starting (one-shot): {' '.join(args)}")
+
+        try:
+            proc = subprocess.run(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=self._spotread_env(),
+                timeout=120,
+            )
+            raw = proc.stdout.decode("utf-8", errors="replace")
+        except subprocess.TimeoutExpired as e:
+            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
+            raw += "\n[Erreur: spotread a expiré]"
+        except Exception as e:
+            raw = f"[Erreur spotread one-shot: {e}]"
+
+        self.console_output.append(raw)
+        self._stdout_buf = raw
+
+        raw_lower = raw.lower()
+        if re.search(r"calibration\s+(successful|complete|ok)|calibrated\s+ok", raw_lower):
+            self._set_calibrated_ui()
+            self.console_output.append(">> Sonde calibrée ✅")
+
+        if "wrong position" in raw_lower or "sensor should be" in raw_lower:
+            self.console_output.append(
+                "⚠ Position capteur incorrecte: en mode écran/projo, mettez le capteur sur la surface à mesurer avant \"Mesurer\".")
+
+        if calibration_only:
+            return
+
+        match_xyz = re.search(
+            r"Result is XYZ:\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)", raw)
+        match_yxy = re.search(
+            r"Result is Yxy:\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)", raw)
+
+        if match_xyz:
+            X, Y, Z = map(float, match_xyz.groups())
+            self.update_color_display(X, Y, Z)
+        elif match_yxy:
+            Yv, x, y = map(float, match_yxy.groups())
+            X, Y, Z = yxy_to_xyz(Yv, x, y)
+            self.update_color_display(X, Y, Z)
+
+        if os.path.exists(self.temp_file):
+            self.plot_spectrum(self.temp_file)
+            self.save_measurement_file()
+        else:
+            spec_written = self._write_spectrum_from_buffer()
+            if spec_written:
+                self.plot_spectrum(self.temp_file)
+                self.save_measurement_file()
+
+    def _update_mode_guidance(self):
+        mode_arg = self.mode_combo.currentData()
+        if mode_arg == "-e":
+            txt = "Emission (-e): mesure écran/lumière directe. Capteur en position surface contre l'écran."
+        elif mode_arg == "-a":
+            txt = "Ambient (-a): mesure lumière ambiante. Utilisez l'accessoire/diffuseur ambiant de la sonde si nécessaire."
+        elif mode_arg == "-p":
+            txt = "Projector (-p): mode téléphoto si supporté (ColorMunki/i1Pro). Sinon préférez Emission (-e)."
+        else:
+            txt = "Spot (réflectance): mesure de surface réfléchissante."
+        self.mode_help_label.setText(txt)
+
+    def _update_execution_mode_ui(self):
+        interactive = self.exec_mode_combo.currentData() == "interactive"
+        subprocess_obj = getattr(self, "subprocess", None)
+        session_running = subprocess_obj is not None and subprocess_obj.poll() is None
+
+        self.start_btn.setEnabled(interactive and not session_running)
+        self.stop_btn.setEnabled(interactive and session_running)
+        self.calibrate_btn.setEnabled((interactive and session_running) or (not interactive))
+        self.measure_btn.setEnabled((interactive and session_running) or (not interactive))
+
+        self.refresh_instr_btn.setEnabled(not session_running)
+        self.instrument_combo.setEnabled(not session_running)
+        self.mode_combo.setEnabled(not session_running)
+        self.exec_mode_combo.setEnabled(not session_running)
+
     def trigger_calibration(self):
         """Send space to spotread to trigger calibration."""
+        if self.exec_mode_combo.currentData() != "interactive":
+            self._run_spotread_oneshot(calibration_only=True)
+            return
         if self.master_fd is not None:
             os.write(self.master_fd, b' ')
             self.console_output.append(">> Calibration envoy\u00e9e (SPACE)")
 
     def trigger_measurement(self):
         """Send space to spotread to take a measurement."""
+        if self.exec_mode_combo.currentData() != "interactive":
+            self._run_spotread_oneshot(calibration_only=False)
+            return
         if self.master_fd is not None:
             os.write(self.master_fd, b' ')
             self.console_output.append(">> Mesure envoy\u00e9e (SPACE)")
@@ -639,10 +779,12 @@ class SpectrumPlotter(QMainWindow):
         self.refresh_instr_btn.setEnabled(True)
         self.instrument_combo.setEnabled(True)
         self.mode_combo.setEnabled(True)
+        self.exec_mode_combo.setEnabled(True)
         # Reset calibration indicator
         self._calibrated = False
         self.calib_status_label.setText("\U0001f534  Non calibr\u00e9")
         self.calib_status_label.setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;")
+        self._update_execution_mode_ui()
 
     # ------------------------------------------------------------------
     # Instrument enumeration
