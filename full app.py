@@ -290,14 +290,9 @@ class SpectrumPlotter(QMainWindow):
         self.left_panel = QWidget()
         self.left_panel.setMinimumWidth(320)
         self.left_layout = QVBoxLayout(self.left_panel)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.setSpacing(10)
-
-        self.left_scroll = QScrollArea()
-        self.left_scroll.setWidget(self.left_panel)
-        self.left_scroll.setWidgetResizable(True)
-        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.left_scroll.setMinimumWidth(340)
-        self.main_layout.addWidget(self.left_scroll, 1)
+        self.main_layout.addWidget(self.left_panel, 1)
 
         # ArgyllCMS Controls Group
         self.controls_group = QGroupBox("ArgyllCMS Controls")
@@ -309,7 +304,7 @@ class SpectrumPlotter(QMainWindow):
 
         # --- Form: Instrument / Mode / Nom ---
         form = QFormLayout()
-        form.setSpacing(6)
+        form.setSpacing(5)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         instr_row_widget = QWidget()
@@ -338,7 +333,8 @@ class SpectrumPlotter(QMainWindow):
         self.exec_mode_combo = QComboBox()
         self.exec_mode_combo.addItem("Appel unique (-O) [recommandé]", "oneshot")
         self.exec_mode_combo.addItem("Session interactive (PTY)", "interactive")
-        form.addRow("Exécution :", self.exec_mode_combo)
+        self.exec_mode_combo.setCurrentIndex(0)
+        self.exec_mode_combo.setVisible(False)
 
         self.measurement_name_input = QLineEdit()
         self.measurement_name_input.setPlaceholderText("ex: Lampe-01")
@@ -388,17 +384,19 @@ class SpectrumPlotter(QMainWindow):
             "QPushButton:hover:!disabled { background-color: #1e8449; }"
             "QPushButton:disabled { background-color: #a9dfbf; }"
         )
-        btn_grid.addWidget(self.start_btn, 0, 0, 1, 2)
+        self.start_btn.setVisible(False)
 
         self.calibrate_btn = QPushButton("⚙  Calibrer")
         self.calibrate_btn.clicked.connect(self.trigger_calibration)
-        self.calibrate_btn.setEnabled(False)
-        btn_grid.addWidget(self.calibrate_btn, 1, 0)
+        self.calibrate_btn.setEnabled(True)
+        self.calibrate_btn.setMinimumHeight(34)
+        btn_grid.addWidget(self.calibrate_btn, 0, 0)
 
         self.measure_btn = QPushButton("◉  Mesurer")
         self.measure_btn.clicked.connect(self.trigger_measurement)
-        self.measure_btn.setEnabled(False)
-        btn_grid.addWidget(self.measure_btn, 1, 1)
+        self.measure_btn.setEnabled(True)
+        self.measure_btn.setMinimumHeight(34)
+        btn_grid.addWidget(self.measure_btn, 0, 1)
 
         self.stop_btn = QPushButton("■  Arrêter Session")
         self.stop_btn.clicked.connect(self.stop_session)
@@ -408,7 +406,7 @@ class SpectrumPlotter(QMainWindow):
             "QPushButton:hover:!disabled { background-color: #a93226; }"
             "QPushButton:disabled { background-color: #f1948a; }"
         )
-        btn_grid.addWidget(self.stop_btn, 2, 0, 1, 2)
+        self.stop_btn.setVisible(False)
 
         controls_outer.addLayout(btn_grid)
 
@@ -421,7 +419,6 @@ class SpectrumPlotter(QMainWindow):
         self.left_layout.addWidget(self.controls_group)
 
         self.mode_combo.currentIndexChanged.connect(self._update_mode_guidance)
-        self.exec_mode_combo.currentIndexChanged.connect(self._update_execution_mode_ui)
         self._oneshot_thread = None
         self._oneshot_busy = False
         self._update_mode_guidance()
@@ -429,13 +426,12 @@ class SpectrumPlotter(QMainWindow):
 
         # Console Output (collapsible)
         self.console_group = QGroupBox("Sortie Console")
-        self.console_group.setCheckable(True)
-        self.console_group.setChecked(True)
+        self.console_group.setCheckable(False)
         console_layout = QVBoxLayout()
         console_layout.setSpacing(6)
         self.console_output = QTextEdit()
         self.console_output.setReadOnly(True)
-        self.console_output.setMinimumHeight(120)
+        self.console_output.setMinimumHeight(140)
         self.console_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self.console_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: 'Menlo', 'Courier New', monospace;")
         console_layout.addWidget(self.console_output)
@@ -444,6 +440,7 @@ class SpectrumPlotter(QMainWindow):
         clear_console_btn.clicked.connect(self.console_output.clear)
         console_layout.addWidget(clear_console_btn)
         self.console_group.setLayout(console_layout)
+        self.left_layout.addStretch(1)
         self.left_layout.addWidget(self.console_group)
 
         # Color Equivalence Group
@@ -484,8 +481,6 @@ class SpectrumPlotter(QMainWindow):
         self.cri_details.setPlainText("XYZ: -\nRGB: -\nLab: -\nCRI (Ra): -")
         self.color_layout.addWidget(self.cri_details)
         self.color_group.setMaximumHeight(180)
-
-        self.left_layout.addStretch(1)
 
         # --- Right Panel: Spectre + CIE + Historique ---
         self.right_panel = QWidget()
@@ -787,9 +782,8 @@ class SpectrumPlotter(QMainWindow):
         if self._oneshot_busy:
             self.console_output.append("Une opération one-shot est déjà en cours. Patientez.")
             return
-        if self.exec_mode_combo.currentData() != "interactive":
-            self.console_output.append("Mode appel unique actif: utilisez ⚙ Calibrer puis ◉ Mesurer.")
-            return
+        self.console_output.append("Mode interactif masqué: utilisez ⚙ Calibrer puis ◉ Mesurer (one-shot).")
+        return
 
         if self.subprocess and self.subprocess.poll() is None:
             return
@@ -970,20 +964,19 @@ class SpectrumPlotter(QMainWindow):
         self.mode_help_label.setText(txt)
 
     def _update_execution_mode_ui(self):
-        interactive = self.exec_mode_combo.currentData() == "interactive"
         subprocess_obj = getattr(self, "subprocess", None)
         session_running = subprocess_obj is not None and subprocess_obj.poll() is None
         busy = getattr(self, "_oneshot_busy", False)
 
-        self.start_btn.setEnabled(interactive and not session_running and not busy)
-        self.stop_btn.setEnabled(interactive and session_running)
-        self.calibrate_btn.setEnabled(((interactive and session_running) or (not interactive)) and not busy)
-        self.measure_btn.setEnabled(((interactive and session_running) or (not interactive)) and not busy)
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.calibrate_btn.setEnabled(not busy and not session_running)
+        self.measure_btn.setEnabled(not busy and not session_running)
 
         self.refresh_instr_btn.setEnabled(not session_running and not busy)
         self.instrument_combo.setEnabled(not session_running and not busy)
         self.mode_combo.setEnabled(not session_running and not busy)
-        self.exec_mode_combo.setEnabled(not session_running and not busy)
+        self.exec_mode_combo.setEnabled(False)
         self.change_folder_btn.setEnabled(not busy)
         if hasattr(self, "open_button"):
             self.open_button.setEnabled(not busy)
@@ -994,7 +987,6 @@ class SpectrumPlotter(QMainWindow):
     def _update_status_banner(self):
         instr = self.instrument_combo.currentText() or "-"
         mode = self.mode_combo.currentText().split("[")[0].strip() if self.mode_combo.count() else "-"
-        exec_mode = "interactive" if self.exec_mode_combo.currentData() == "interactive" else "appel unique"
         process_obj = getattr(self, "subprocess", None)
         interactive_running = process_obj is not None and process_obj.poll() is None
 
@@ -1007,32 +999,22 @@ class SpectrumPlotter(QMainWindow):
 
         calib_txt = "calibré" if getattr(self, "_calibrated", False) else "non calibré"
         self.session_status_label.setText(
-            f"État: {run_state} | Mode: {mode} | Exécution: {exec_mode} | Calib: {calib_txt} | Instrument: {instr}"
+            f"État: {run_state} | Mode: {mode} | Exécution: appel unique | Calib: {calib_txt} | Instrument: {instr}"
         )
 
     def trigger_calibration(self):
         """Send space to spotread to trigger calibration."""
-        if self.exec_mode_combo.currentData() != "interactive":
-            if self._oneshot_busy:
-                self.console_output.append("Une opération one-shot est déjà en cours.")
-                return
-            self._run_spotread_oneshot(calibration_only=True)
+        if self._oneshot_busy:
+            self.console_output.append("Une opération one-shot est déjà en cours.")
             return
-        if self.master_fd is not None:
-            os.write(self.master_fd, b' ')
-            self.console_output.append(">> Calibration envoy\u00e9e (SPACE)")
+        self._run_spotread_oneshot(calibration_only=True)
 
     def trigger_measurement(self):
         """Send space to spotread to take a measurement."""
-        if self.exec_mode_combo.currentData() != "interactive":
-            if self._oneshot_busy:
-                self.console_output.append("Une opération one-shot est déjà en cours.")
-                return
-            self._run_spotread_oneshot(calibration_only=False)
+        if self._oneshot_busy:
+            self.console_output.append("Une opération one-shot est déjà en cours.")
             return
-        if self.master_fd is not None:
-            os.write(self.master_fd, b' ')
-            self.console_output.append(">> Mesure envoy\u00e9e (SPACE)")
+        self._run_spotread_oneshot(calibration_only=False)
 
     # ------------------------------------------------------------------
     # PTY output handler
@@ -1176,14 +1158,14 @@ class SpectrumPlotter(QMainWindow):
         self._pending_result = False
 
         self.console_output.append("Process Finished.")
-        self.start_btn.setEnabled(True)
+        self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.measure_btn.setEnabled(False)
-        self.calibrate_btn.setEnabled(False)
+        self.measure_btn.setEnabled(True)
+        self.calibrate_btn.setEnabled(True)
         self.refresh_instr_btn.setEnabled(True)
         self.instrument_combo.setEnabled(True)
         self.mode_combo.setEnabled(True)
-        self.exec_mode_combo.setEnabled(True)
+        self.exec_mode_combo.setEnabled(False)
         # Reset calibration indicator
         self._calibrated = False
         self.calib_status_label.setText("\U0001f534  Non calibr\u00e9")
@@ -1586,6 +1568,7 @@ class SpectrumPlotter(QMainWindow):
             file_name = os.path.basename(file_path)
             self.ax.set_title(f'Spectre : {file_name}', fontsize=13, color='#102a43', pad=10, fontweight='600')
             self.ax.tick_params(axis='both', which='major', labelsize=9, colors='#334e68')
+            self.ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
             self.ax.grid(True, which='major', color='#d9e2ec', linewidth=0.8, alpha=0.7)
             self.ax.grid(True, which='minor', color='#e9eff5', linewidth=0.5, alpha=0.55)
             self.ax.minorticks_on()
@@ -1599,7 +1582,7 @@ class SpectrumPlotter(QMainWindow):
                 self.ax.spines[spine].set_color('#9fb3c8')
                 self.ax.spines[spine].set_linewidth(1.0)
 
-            self.canvas.figure.subplots_adjust(left=0.065, right=0.998, bottom=0.075, top=0.935)
+            self.canvas.figure.subplots_adjust(left=0.09, right=0.995, bottom=0.12, top=0.935)
             self.canvas.draw()
             
         except Exception as e:
