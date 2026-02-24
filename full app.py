@@ -157,6 +157,37 @@ class InstrumentEnumeratorThread(QThread):
         self.instruments_found.emit(instruments)
 
 
+class SpotreadOneShotThread(QThread):
+    """Runs a one-shot spotread command outside the UI thread."""
+    output_ready = pyqtSignal(str, bool)  # raw output, calibration_only
+
+    def __init__(self, args, env, timeout_s=120, calibration_only=False):
+        super().__init__()
+        self.args = args
+        self.env = env
+        self.timeout_s = timeout_s
+        self.calibration_only = calibration_only
+
+    def run(self):
+        try:
+            proc = subprocess.run(
+                self.args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=self.env,
+                timeout=self.timeout_s,
+            )
+            raw = proc.stdout.decode("utf-8", errors="replace")
+        except subprocess.TimeoutExpired as e:
+            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
+            raw += "\n[Erreur: spotread a expiré]"
+        except Exception as e:
+            raw = f"[Erreur spotread one-shot: {e}]"
+
+        self.output_ready.emit(raw, self.calibration_only)
+
+
 class SpectrumPlotter(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -165,14 +196,15 @@ class SpectrumPlotter(QMainWindow):
         self.setStyleSheet("""
             QWidget {
                 font-size: 12px;
+                color: #1f2933;
             }
             QGroupBox {
                 font-weight: bold;
-                border: 1px solid #c7c7c7;
-                border-radius: 6px;
+                border: 1px solid #d3dce6;
+                border-radius: 8px;
                 margin-top: 10px;
-                padding: 6px;
-                background-color: #f7f7f7;
+                padding: 8px;
+                background-color: #fafbfd;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -180,31 +212,32 @@ class SpectrumPlotter(QMainWindow):
                 padding: 0 6px;
             }
             QPushButton {
-                background-color: #2d6cdf;
+                background-color: #2f6fda;
                 color: white;
                 border: none;
                 padding: 6px 10px;
-                border-radius: 4px;
+                border-radius: 6px;
                 min-height: 30px;
                 min-width: 80px;
+                font-weight: 600;
             }
             QPushButton:disabled {
-                background-color: #9ab3e5;
+                background-color: #aabfe8;
             }
             QPushButton:hover:!disabled {
-                background-color: #1f5bc7;
+                background-color: #245fc3;
             }
             QLineEdit, QComboBox {
                 background-color: #ffffff;
-                border: 1px solid #c7c7c7;
-                border-radius: 4px;
-                padding: 4px;
+                border: 1px solid #d3dce6;
+                border-radius: 6px;
+                padding: 5px;
                 min-height: 28px;
             }
             QTextEdit {
                 background-color: #ffffff;
-                border: 1px solid #c7c7c7;
-                border-radius: 4px;
+                border: 1px solid #d3dce6;
+                border-radius: 6px;
                 padding: 4px;
             }
         """)
@@ -284,6 +317,14 @@ class SpectrumPlotter(QMainWindow):
         self.mode_help_label.setStyleSheet("color: #444; font-size: 11px; padding: 2px;")
         controls_outer.addWidget(self.mode_help_label)
 
+        self.session_status_label = QLabel("État : prêt")
+        self.session_status_label.setWordWrap(True)
+        self.session_status_label.setStyleSheet(
+            "background-color: #eef4ff; color: #1f4ea3; border: 1px solid #c9daf9; "
+            "border-radius: 6px; padding: 6px;"
+        )
+        controls_outer.addWidget(self.session_status_label)
+
         # --- Dossier de sauvegarde (inline) ---
         folder_row = QHBoxLayout()
         folder_row.setSpacing(6)
@@ -342,17 +383,28 @@ class SpectrumPlotter(QMainWindow):
 
         self.mode_combo.currentIndexChanged.connect(self._update_mode_guidance)
         self.exec_mode_combo.currentIndexChanged.connect(self._update_execution_mode_ui)
+        self._oneshot_thread = None
+        self._oneshot_busy = False
         self._update_mode_guidance()
         self._update_execution_mode_ui()
 
-        # Console Output
-        self.left_layout.addWidget(QLabel("Sortie Console:"))
+        # Console Output (collapsible)
+        self.console_group = QGroupBox("Sortie Console")
+        self.console_group.setCheckable(True)
+        self.console_group.setChecked(True)
+        console_layout = QVBoxLayout()
+        console_layout.setSpacing(6)
         self.console_output = QTextEdit()
         self.console_output.setReadOnly(True)
         self.console_output.setMinimumHeight(120)
         self.console_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self.console_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: 'Menlo', 'Courier New', monospace;")
-        self.left_layout.addWidget(self.console_output)
+        console_layout.addWidget(self.console_output)
+        clear_console_btn = QPushButton("Effacer console")
+        clear_console_btn.clicked.connect(self.console_output.clear)
+        console_layout.addWidget(clear_console_btn)
+        self.console_group.setLayout(console_layout)
+        self.left_layout.addWidget(self.console_group)
 
         # Color Equivalence Group
         self.color_group = QGroupBox("Colorimétrie & CRI")
@@ -392,18 +444,20 @@ class SpectrumPlotter(QMainWindow):
         self.right_layout.setSpacing(8)
         self.main_layout.addWidget(self.right_panel, 2)
 
+        self.file_actions_row = QHBoxLayout()
+        self.file_actions_row.setSpacing(8)
         self.open_button = QPushButton('Choisir le fichier (Manuel)')
         self.open_button.clicked.connect(self.open_file)
-        self.right_layout.addWidget(self.open_button)
+        self.file_actions_row.addWidget(self.open_button)
+        self.save_button = QPushButton('Sauvegarder le graphique')
+        self.save_button.clicked.connect(self.save_plot)
+        self.file_actions_row.addWidget(self.save_button)
+        self.right_layout.addLayout(self.file_actions_row)
 
         self.canvas = FigureCanvas(plt.Figure(figsize=(12, 9), dpi=100))
         self.canvas.setMinimumSize(800, 600)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.right_layout.addWidget(self.canvas)
-
-        self.save_button = QPushButton('Sauvegarder le graphique')
-        self.save_button.clicked.connect(self.save_plot)
-        self.right_layout.addWidget(self.save_button)
 
         self.ax = self.canvas.figure.subplots()
 
@@ -427,8 +481,12 @@ class SpectrumPlotter(QMainWindow):
 
         # Enumerate instruments at startup
         self.enumerate_instruments()
+        self._update_status_banner()
 
     def start_session(self):
+        if self._oneshot_busy:
+            self.console_output.append("Une opération one-shot est déjà en cours. Patientez.")
+            return
         if self.exec_mode_combo.currentData() != "interactive":
             self.console_output.append("Mode appel unique actif: utilisez ⚙ Calibrer puis ◉ Mesurer.")
             return
@@ -479,6 +537,7 @@ class SpectrumPlotter(QMainWindow):
         self.instrument_combo.setEnabled(False)
         self.mode_combo.setEnabled(False)
         self.exec_mode_combo.setEnabled(False)
+        self._update_status_banner()
 
     def stop_session(self):
         if self.subprocess and self.subprocess.poll() is None:
@@ -525,6 +584,12 @@ class SpectrumPlotter(QMainWindow):
 
         return args
 
+    def _set_oneshot_busy(self, busy: bool, action_label: str = ""):
+        self._oneshot_busy = busy
+        if busy and action_label:
+            self.console_output.append(f"{action_label} en cours…")
+        self._update_execution_mode_ui()
+
     def _set_calibrated_ui(self):
         self._calibrated = True
         self.calib_status_label.setText("✅  Calibré")
@@ -534,22 +599,23 @@ class SpectrumPlotter(QMainWindow):
         args = self._build_spotread_args(interactive=False, calibration_only=calibration_only)
         self.console_output.append(f"Starting (one-shot): {' '.join(args)}")
 
-        try:
-            proc = subprocess.run(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                env=self._spotread_env(),
-                timeout=120,
-            )
-            raw = proc.stdout.decode("utf-8", errors="replace")
-        except subprocess.TimeoutExpired as e:
-            raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
-            raw += "\n[Erreur: spotread a expiré]"
-        except Exception as e:
-            raw = f"[Erreur spotread one-shot: {e}]"
+        self._set_oneshot_busy(True, "Calibration" if calibration_only else "Mesure")
+        self._oneshot_thread = SpotreadOneShotThread(
+            args=args,
+            env=self._spotread_env(),
+            timeout_s=120,
+            calibration_only=calibration_only,
+        )
+        self._oneshot_thread.output_ready.connect(self._on_oneshot_output_ready)
+        self._oneshot_thread.finished.connect(self._on_oneshot_finished)
+        self._oneshot_thread.finished.connect(self._oneshot_thread.deleteLater)
+        self._oneshot_thread.start()
 
+    def _on_oneshot_finished(self):
+        self._oneshot_thread = None
+        self._set_oneshot_busy(False)
+
+    def _on_oneshot_output_ready(self, raw: str, calibration_only: bool):
         self.console_output.append(raw)
         self._stdout_buf = raw
 
@@ -603,20 +669,49 @@ class SpectrumPlotter(QMainWindow):
         interactive = self.exec_mode_combo.currentData() == "interactive"
         subprocess_obj = getattr(self, "subprocess", None)
         session_running = subprocess_obj is not None and subprocess_obj.poll() is None
+        busy = getattr(self, "_oneshot_busy", False)
 
-        self.start_btn.setEnabled(interactive and not session_running)
+        self.start_btn.setEnabled(interactive and not session_running and not busy)
         self.stop_btn.setEnabled(interactive and session_running)
-        self.calibrate_btn.setEnabled((interactive and session_running) or (not interactive))
-        self.measure_btn.setEnabled((interactive and session_running) or (not interactive))
+        self.calibrate_btn.setEnabled(((interactive and session_running) or (not interactive)) and not busy)
+        self.measure_btn.setEnabled(((interactive and session_running) or (not interactive)) and not busy)
 
-        self.refresh_instr_btn.setEnabled(not session_running)
-        self.instrument_combo.setEnabled(not session_running)
-        self.mode_combo.setEnabled(not session_running)
-        self.exec_mode_combo.setEnabled(not session_running)
+        self.refresh_instr_btn.setEnabled(not session_running and not busy)
+        self.instrument_combo.setEnabled(not session_running and not busy)
+        self.mode_combo.setEnabled(not session_running and not busy)
+        self.exec_mode_combo.setEnabled(not session_running and not busy)
+        self.change_folder_btn.setEnabled(not busy)
+        if hasattr(self, "open_button"):
+            self.open_button.setEnabled(not busy)
+        if hasattr(self, "save_button"):
+            self.save_button.setEnabled(not busy)
+        self._update_status_banner()
+
+    def _update_status_banner(self):
+        instr = self.instrument_combo.currentText() or "-"
+        mode = self.mode_combo.currentText().split("[")[0].strip() if self.mode_combo.count() else "-"
+        exec_mode = "interactive" if self.exec_mode_combo.currentData() == "interactive" else "appel unique"
+        process_obj = getattr(self, "subprocess", None)
+        interactive_running = process_obj is not None and process_obj.poll() is None
+
+        if self._oneshot_busy:
+            run_state = "Exécution one-shot…"
+        elif interactive_running:
+            run_state = "Session interactive active"
+        else:
+            run_state = "Prêt"
+
+        calib_txt = "calibré" if getattr(self, "_calibrated", False) else "non calibré"
+        self.session_status_label.setText(
+            f"État: {run_state} | Mode: {mode} | Exécution: {exec_mode} | Calib: {calib_txt} | Instrument: {instr}"
+        )
 
     def trigger_calibration(self):
         """Send space to spotread to trigger calibration."""
         if self.exec_mode_combo.currentData() != "interactive":
+            if self._oneshot_busy:
+                self.console_output.append("Une opération one-shot est déjà en cours.")
+                return
             self._run_spotread_oneshot(calibration_only=True)
             return
         if self.master_fd is not None:
@@ -626,6 +721,9 @@ class SpectrumPlotter(QMainWindow):
     def trigger_measurement(self):
         """Send space to spotread to take a measurement."""
         if self.exec_mode_combo.currentData() != "interactive":
+            if self._oneshot_busy:
+                self.console_output.append("Une opération one-shot est déjà en cours.")
+                return
             self._run_spotread_oneshot(calibration_only=False)
             return
         if self.master_fd is not None:
@@ -818,9 +916,10 @@ class SpectrumPlotter(QMainWindow):
             self.console_output.append(
                 "Aucun instrument d\u00e9tect\u00e9 — v\u00e9rifiez la connexion USB et qu'ArgyllCMS est install\u00e9.")
         # Only re-enable these controls when no measurement session is active
-        session_idle = self.subprocess is None or self.subprocess.poll() is not None
+        session_idle = (self.subprocess is None or self.subprocess.poll() is not None) and not self._oneshot_busy
         self.instrument_combo.setEnabled(session_idle)
         self.refresh_instr_btn.setEnabled(session_idle)
+        self._update_status_banner()
 
     def select_save_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Choisir le dossier de sauvegarde")
