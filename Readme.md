@@ -61,7 +61,11 @@
 - Désavantage >>> pas de calcul des valeurs utiles / installation requise (app autonome bientot fournies)
 - Voir en bas pour l'installation de l'app Python
 
-- Lancer la commande suivante :
+- Lancer la commande suivante (nouvel entrypoint) :
+  ```sh
+  python3 "path/main.py"
+  ```
+- L'ancien lancement reste compatible temporairement :
   ```sh
   python3 "path/full app.py"
   ```

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <id>com.argyllcms</id>
+  <metadata_license>MIT</metadata_license>
+  <name>argyll</name>
+  <summary>Color Management System, calibrator and profiler</summary>
+  <description>
+    <p>Argyll is an experimental, open source, ICC compatible color
+    management system. It supports accurate ICC profile creation for
+    scanners, CMYK printers, film recorders and calibration and
+    profiling of displays.  Spectral sample data is supported,
+    allowing a selection of illuminants observer types, and paper
+    fluorescent whitener additive compensation.  Profiles can also
+    incorporate source specific gamut mappings for perceptual and
+    saturation intents. Gamut mapping and profile linking uses the
+    CIECAM02 appearance model, a unique gamut mapping algorithm, and a
+    wide selection of rendering intents. It also includes code for the
+    fastest portable 8 bit raster color conversion engine available
+    anywhere, as well as support for fast, fully accurate 16 bit
+    conversion. Device color gamuts can also be viewed and compared
+    using a VRML viewer.</p>
+  </description>
+  <provides>
+    <modalias>usb:vv04dbp005b*</modalias>
+    <modalias>usb:vv0670p0001*</modalias>
+    <modalias>usb:vv0765p5001*</modalias>
+    <modalias>usb:vv0765p5010*</modalias>
+    <modalias>usb:vv0765p5020*</modalias>
+    <modalias>usb:vv0765p6003*</modalias>
+    <modalias>usb:vv0765p6008*</modalias>
+    <modalias>usb:vv0765p6009*</modalias>
+    <modalias>usb:vv0765pd020*</modalias>
+    <modalias>usb:vv0765pd092*</modalias>
+    <modalias>usb:vv0765pd094*</modalias>
+    <modalias>usb:vv0971p2000*</modalias>
+    <modalias>usb:vv0971p2001*</modalias>
+    <modalias>usb:vv0971p2003*</modalias>
+    <modalias>usb:vv0971p2004*</modalias>
+    <modalias>usb:vv0971p2005*</modalias>
+    <modalias>usb:vv0971p2006*</modalias>
+    <modalias>usb:vv0971p2007*</modalias>
+    <modalias>usb:vv085cp0100*</modalias>
+    <modalias>usb:vv085cp0200*</modalias>
+    <modalias>usb:vv085cp0300*</modalias>
+    <modalias>usb:vv085cp0400*</modalias>
+    <modalias>usb:vv085cp0500*</modalias>
+    <modalias>usb:vv085cp0a00*</modalias>
+    <modalias>usb:vv085cp0a0a*</modalias>
+    <modalias>usb:vv04d8pf8da*</modalias>
+    <modalias>usb:vv273fp1001*</modalias>
+    <modalias>usb:vv273fp1004*</modalias>
+    <modalias>usb:vv273fp1002*</modalias>
+    <modalias>usb:vv2457p4000*</modalias>
+  </provides>
+</component>

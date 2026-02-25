@@ -1,0 +1,211 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+  <head>
+    <title>mpplu</title>
+    <meta http-equiv="content-type" content="text/html;
+      charset=windows-1252">
+    <meta name="author" content="Graeme Gill">
+  </head>
+  <body>
+    <h2><b>xicc/mpplu</b></h2>
+    <h3>Summary</h3>
+    Lookup individual color values though an&nbsp;<a
+      href="File_Formats.html#MPP">MPP</a> profile. Also create MPP
+    gamut files or&nbsp;<a href="File_Formats.html#X3DOM">X3DOM</a>
+    views.<br>
+    <h3>Usage</h3>
+    <tt>mpplu [-v level] [-f func] [-i intent] [-o order] <i>profile.mpp</i></tt><tt><br>
+    </tt><tt>
+      -v&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+
+
+      Verbose</tt><tt><br>
+    </tt><tt> -f function&nbsp;&nbsp; &nbsp;f = forward, b = backwards</tt><tt><br>
+    </tt><tt> -p oride&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; x = XYZ_PCS,
+      l = Lab_PCS, y = Yxy, s = spectral,</tt><tt><br>
+    </tt><tt> -l limit&nbsp;&nbsp; &nbsp; &nbsp; override default ink
+      limit, 1 - N00%</tt><tt><br>
+    </tt><tt> -i illum&nbsp;&nbsp; &nbsp; &nbsp; Choose illuminant for
+      print/transparency spectral data:</tt><tt><br>
+    </tt><tt>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp;&nbsp; A, C, D50 (def.), D50M2, D65, F5, F8, F10 or
+      file.sp</tt><tt><br>
+    </tt><tt> -o observ&nbsp; &nbsp; &nbsp; Choose CIE Observer for
+      spectral data:</tt><tt><br>
+    </tt><tt>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp;&nbsp; 1931_2 (def.), 1964_10, 2015_2, 2015_10,
+      S&amp;B
+      1955_2, shaw, J&amp;V 1978_2 or file.cmf</tt><tt><br>
+    </tt><tt> -u&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp; Use Fluorescent Whitening Agent compensation</tt><tt><br>
+    </tt><tt>
+      -s&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+      Print spectrum for each lookup</tt><tt><br>
+    </tt><tt>
+      -S&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+      Plot spectrum for each lookup</tt><tt><br>
+    </tt><tt> -g&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp; Create gamut output</tt><tt><br>
+    </tt><tt> -w&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp; Create gamut X3DOM as well</tt><tt><br>
+    </tt><tt>
+      -n&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+Don't
+
+
+
+      add X3DOM axes</tt><tt><br>
+    </tt><tt> -a
+      n&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      Gamut transparency level</tt><tt><br>
+    </tt><tt> -d n&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &nbsp; &nbsp;
+      Gamut surface detail level</tt><tt><br>
+    </tt><tt>
+      -e&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+      Create VRML edge plot</tt><tt><br>
+    </tt><tt>
+      -E&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+      Create VRML all possible edge plot</tt><tt><br>
+    </tt><tt>
+      -F&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+
+      Create VRML face plot</tt><br>
+    
+
+    <tt>&nbsp;-t num&nbsp;&nbsp;&nbsp;&nbsp; &nbsp; &nbsp; Invoke
+      debugging test code "num" 1..n</tt><tt><br>
+    </tt><tt>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp;&nbsp; 1 - check partial derivative for device input</tt><tt><br>
+    </tt><tt>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      &nbsp; &nbsp;&nbsp; 2 - create overlap diagnostic X3DOM gamut
+      surface</tt><tt><br>
+    </tt><tt> <i>profile.mpp</i> &nbsp; Profile to be used</tt><br
+      style="font-family: monospace;">
+    <br style="font-family: monospace;">
+    &nbsp;&nbsp;&nbsp; The colors to be translated should be fed into
+    standard input,<br style="font-family: monospace;">
+    &nbsp;&nbsp;&nbsp; one input color per line, white space separated.<br
+      style="font-family: monospace;">
+    &nbsp;&nbsp;&nbsp; A line starting with a # will be ignored.<br
+      style="font-family: monospace;">
+    &nbsp;&nbsp;&nbsp; A line not starting with a number will terminate
+    the program. <br>
+    <h3>Usage Details and Discussion</h3>
+    This is an analogous tool to <a href="icclu.html"> icclu </a>, but
+    applying to <a href="File_Formats.html#MPP">MPP</a> profile, rather
+    than <a href="File_Formats.html#ICC">ICC</a> profiles. Because MPP
+    profiles can also contain a spectral description of device behavior,
+    there are extra options in mpplu to describe how to convert spectral
+    values into CIE tristimulus values.<br>
+    Some additional functionality is included in mpplu, analogous to <a
+      href="iccgamut.html"> iccgamut</a>, allowing gamut files and
+    images to be generated from MPP profiles.<br>
+    <br>
+    The <b>-v</b> flag causes extra information about the profile to be
+    printed.<br>
+    <br>
+    The <b>-f</b> flag is experimental, and should be ignored.<br>
+    <br>
+    Normally L*a*b* is displayed, but this can be changed using the the
+    <b>-p</b> flag and XYZ, Yxy, or spectral values to be be displayed.<br>
+    <br>
+    If an illuminant, observer or Fluorescent Whitening Agent
+    compensation is selected, then the CIE tristimulus values will be
+    computed from the spectral information in the MPP profile (if
+    present).<br>
+    <br>
+    The <b>-l</b> flag overrides any default ink limit (Total Area
+    Coverage) recorded in the profile. The ink limit has an effect on
+    the results of a gamut generated from the profile.<br>
+    <br>
+    The <b>-i</b> flag allows specifying a standard or custom
+    illumination spectrum, applied to reflective spectral profile data
+    to compute CIE tristimulus values. <b>A</b>, <b>D50</b>, <b>D65</b>,
+    <b>F5</b>, <b>F8</b>, <b>F10</b> are a selection of standard
+    illuminant spectrums, with <b>D50</b> being the default. If a
+    filename is specified instead, it will be assumed to be an Argyll
+    specific <a href="File_Formats.html#.sp">.sp</a> spectrum file.<br>
+    <br>
+    <a name="o"></a> The <b>-o</b> flag allows specifying a tristimulus
+    observer, and is used to compute PCS (Profile Connection Space)
+    tristimulus values. The following choices are available:<br>
+    <b>&nbsp; 1931_2</b> selects the standard CIE 1931 2 degree
+    observer. The default.<br>
+    &nbsp; <b>1964_10</b> selects the standard CIE 1964 10 degree
+    observer.<br>
+    <b>&nbsp; 2015_2</b> selects the standard CIE 2015 2 degree observer<br>
+    &nbsp; <b>2015_10</b> selects the standard CIE 2015 10 degree
+    observer<br>
+    &nbsp; <b>1955_2</b> selects the Stiles and Birch 1955 2 degree
+    observer<br>
+    &nbsp; <b>1978_2 </b>selects the Judd and Voss 1978 2 degree
+    observer<br>
+    &nbsp; <b>shaw</b> selects the Shaw and Fairchild 1997 2 degree
+    observer<br>
+    &nbsp; <i><b>file.cmf</b></i> selects an observer specified by the
+    given <a href="File_Formats.html#.cmf">.cmf</a> file.<br>
+    <br>
+    The <b>-u</b> flag enables Fluorescent Whitening Agent
+    compensation, which compensates for the effect a different
+    illuminant will have, on any Fluorescent Whitening Agent present in
+    the reflective media.<br>
+    <br>
+    The <b>-s</b> flag causes the spectral values for each lookup to be
+    printed, if the profile supports this.<br>
+    <br>
+    The <b>-S</b> flag causes the spectral values for each lookup to be
+    ploitted, if the profile supports this.<br>
+    <br>
+    The <b>-g</b> flag causes mpplu to simply generate a gamut surface
+    description from the profile, creating a <a
+      href="File_Formats.html#.gam">.gam</a> file with the same base
+    name as the given profile.<br>
+    <br>
+    The <b>-w</b> flag causes the gamut surface to be generated in <a
+      href="File_Formats.html#X3DOM">X3DOM</a> format as well as <a
+      href="File_Formats.html#.gam">.gam</a> format.<br>
+    <br>
+    The -n flag suppresses the X3DOM axes.<br>
+    <br>
+    The -a n parameter sets a transparency level in the X3DOM surface.<br>
+    <br>
+    The <b>-d</b> parameter controls the level of detail displayed in
+    the gamut surface. The parameter roughly corresponds to a deltaE
+    value, so smaller values give greater detail. The default value is
+    around 10, and is a good place to start. Small values may take a lot
+    of time to generate, and will produce big files.<br>
+    <br>
+    The <b>-e</b> flag creates an X3DOM file named profile_e.x3d.html
+    file containing a plot of the device cube/hyper-cube edges in
+    colorspace. This can be useful in visualizing how the colorants
+    interact.<br>
+    <br>
+    The <b>-E</b> flag creates an X3DOM file named profile_e.x3d.html
+    file containing a plot of all possible device cube/hyper-cube vertex
+    paths in colorspace. This can be useful in visualizing how the
+    colorants interact.<br>
+    <br>
+    The <b>-F</b> flag creates an X3DOM file named profile_f.x3d.html
+    file containing a plot of all possible device cube/hyper-cube 2
+    dimensional faces in colorspace. The faces will be randomly colored.
+    This can be useful in visualizing how the colorants interact.<br>
+    
+
+    <br>
+    The <b>-t</b> parameter invokes special MPP test and diagnostic
+    output.<br>
+    <br>
+    <br>
+    <br>
+    <br>
+  </body>
+</html>

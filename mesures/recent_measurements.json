@@ -1,0 +1,37 @@
+[
+  {
+    "name": "test_2",
+    "path": "/Users/fdaburon/Documents/Vscode/WhoYouGonnaCall_spectrobuster/mesures/2026-02-25/test_2.sp",
+    "timestamp": "25/02 00:50",
+    "x": 0.5201620861957699,
+    "y": 0.4320904651193132
+  },
+  {
+    "name": "test_1",
+    "path": "/Users/fdaburon/Documents/Vscode/WhoYouGonnaCall_spectrobuster/mesures/2026-02-25/test_1.sp",
+    "timestamp": "25/02 00:34",
+    "x": 0.5197689723138132,
+    "y": 0.4323497460585092
+  },
+  {
+    "name": "mesure_5",
+    "path": "/Users/fdaburon/Documents/Vscode/WhoYouGonnaCall_spectrobuster/mesures/2026-02-25/mesure_5.sp",
+    "timestamp": "25/02 00:20",
+    "x": 0.338281781877886,
+    "y": 0.36371582028875116
+  },
+  {
+    "name": "mesure_4",
+    "path": "/Users/fdaburon/Documents/Vscode/WhoYouGonnaCall_spectrobuster/mesures/2026-02-25/mesure_4.sp",
+    "timestamp": "25/02 00:19",
+    "x": 0.4353881346311484,
+    "y": 0.4001350343390837
+  },
+  {
+    "name": "mesure_3",
+    "path": "/Users/fdaburon/Documents/Vscode/WhoYouGonnaCall_spectrobuster/mesures/2026-02-25/mesure_3.sp",
+    "timestamp": "25/02 00:19",
+    "x": 0.5199597961222814,
+    "y": 0.4325170566630712
+  }
+]
