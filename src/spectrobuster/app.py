@@ -60,16 +60,29 @@ class InstrumentEnumeratorThread(QThread):
         try:
             env = build_argyll_env()
             spotread_cmd = resolve_spotread_command()
+            fallback_cmd = "spotread.exe" if os.name == "nt" else "spotread"
+            commands = [spotread_cmd]
+            if os.path.basename(spotread_cmd) != fallback_cmd:
+                commands.append(fallback_cmd)
 
-            proc = subprocess.run(
-                [spotread_cmd, "-?"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # merge stderr so we catch either stream
-                stdin=subprocess.DEVNULL,
-                env=env,
-                timeout=self.timeout_s,
-            )
-            raw = proc.stdout.decode("utf-8", errors="replace")
+            last_exc = None
+            for command in commands:
+                try:
+                    proc = subprocess.run(
+                        [command, "-?"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,  # merge stderr so we catch either stream
+                        stdin=subprocess.DEVNULL,
+                        env=env,
+                        timeout=self.timeout_s,
+                    )
+                    raw = proc.stdout.decode("utf-8", errors="replace")
+                    break
+                except (FileNotFoundError, PermissionError, OSError) as exc:
+                    last_exc = exc
+
+            if not raw and last_exc is not None:
+                raise last_exc
 
         except subprocess.TimeoutExpired as e:
             # Keep partial output if spotread takes too long.
@@ -107,16 +120,31 @@ class SpotreadOneShotThread(QThread):
 
     def run(self):
         started_at = time.perf_counter()
+        fallback_cmd = "spotread.exe" if os.name == "nt" else "spotread"
+        commands = [self.args]
+        if self.args and os.path.basename(self.args[0]) != fallback_cmd:
+            commands.append([fallback_cmd, *self.args[1:]])
+
         try:
-            proc = subprocess.run(
-                self.args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                env=self.env,
-                timeout=self.timeout_s,
-            )
-            raw = proc.stdout.decode("utf-8", errors="replace")
+            last_exc = None
+            raw = ""
+            for args in commands:
+                try:
+                    proc = subprocess.run(
+                        args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        stdin=subprocess.DEVNULL,
+                        env=self.env,
+                        timeout=self.timeout_s,
+                    )
+                    raw = proc.stdout.decode("utf-8", errors="replace")
+                    break
+                except (FileNotFoundError, PermissionError, OSError) as exc:
+                    last_exc = exc
+
+            if not raw and last_exc is not None:
+                raise last_exc
         except subprocess.TimeoutExpired as e:
             raw = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
             raw += "\n[Erreur: spotread a expiré]"

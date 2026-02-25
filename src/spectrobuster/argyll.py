@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 from pathlib import Path
 
 
@@ -44,6 +45,10 @@ def build_argyll_env(base_env: dict | None = None) -> dict:
 
 def resolve_spotread_command() -> str:
     executable_name = "spotread.exe" if platform.system().lower() == "windows" else "spotread"
+
+    system_cmd = shutil.which(executable_name)
+    if system_cmd:
+        return system_cmd
 
     for directory in _platform_bin_candidates():
         candidate = directory / executable_name
