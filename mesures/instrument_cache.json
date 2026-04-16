@@ -1,3 +1,4 @@
 {
-  "1": "/dev/cu.Bluetooth-Incoming-Port"
+  "1": "usb1: (X-Rite ColorMunki)",
+  "2": "/dev/cu.Bluetooth-Incoming-Port"
 }
